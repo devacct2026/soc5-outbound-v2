@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Activity,
   Bell,
@@ -37,20 +39,21 @@ import {
   type LinehaulRequest,
   type RequestStatus,
 } from "@/lib/dashboard-data";
-import { HourlyVolumeChart, RequestFlowChart } from "./charts";
+import { HourlyVolumeChart, RequestFlowChart, type ChartMetric, type ReportingPeriod } from "./charts";
+import { ModulePage } from "./module-page";
 import { RequestsTable } from "./requests-table";
 
 const navigation = [
-  { label: "Dashboard", icon: House },
-  { label: "Requests", icon: FileText },
-  { label: "Approvals", icon: CircleCheck, badge: "8" },
-  { label: "Queue", icon: Truck },
-  { label: "Docking", icon: Building2 },
-  { label: "Intraday KPI", icon: ChartNoAxesColumnIncreasing },
-  { label: "Notifications", icon: Bell, badge: "3", divider: true },
-  { label: "Users", icon: UserRound },
-  { label: "Reports", icon: FileText },
-  { label: "Settings", icon: Settings },
+  { label: "Dashboard", href: "/", icon: House },
+  { label: "Requests", href: "/requests", icon: FileText },
+  { label: "Approvals", href: "/approvals", icon: CircleCheck, badge: "8" },
+  { label: "Queue", href: "/queue", icon: Truck },
+  { label: "Docking", href: "/docking", icon: Building2 },
+  { label: "Intraday KPI", href: "/intraday-kpi", icon: ChartNoAxesColumnIncreasing },
+  { label: "Notifications", href: "/notifications", icon: Bell, badge: "3", divider: true },
+  { label: "Users", href: "/users", icon: UserRound },
+  { label: "Reports", href: "/reports", icon: FileText },
+  { label: "Settings", href: "/settings", icon: Settings },
 ];
 
 const statusColors: Record<string, string> = {
@@ -70,13 +73,11 @@ const dockStatusClass = {
 } as const;
 
 function Sidebar({
-  activeItem,
-  setActiveItem,
+  pathname,
   open,
   close,
 }: {
-  activeItem: string;
-  setActiveItem: (item: string) => void;
+  pathname: string;
   open: boolean;
   close: () => void;
 }) {
@@ -90,7 +91,7 @@ function Sidebar({
           onClick={close}
         />
       )}
-      <aside className={`sidebar ${open ? "sidebar-open" : ""}`} aria-label="Main navigation">
+      <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
         <div className="brand">
           <Box size={28} strokeWidth={2.6} className="brand-mark" aria-hidden="true" />
           <span>SOC5 Outbound</span>
@@ -103,25 +104,21 @@ function Sidebar({
             <ChevronsLeft size={17} />
           </button>
         </div>
-        <nav className="side-nav">
+        <nav className="side-nav" id="main-navigation" aria-label="Main navigation">
           {navigation.map((item) => {
             const Icon = item.icon;
-            const selected = activeItem === item.label;
+            const selected = pathname === item.href;
             return (
               <div className={item.divider ? "nav-divider" : undefined} key={item.label}>
-                <button
-                  type="button"
+                <Link
+                  href={item.href}
                   className={`nav-item ${selected ? "nav-item-active" : ""}`}
                   aria-current={selected ? "page" : undefined}
-                  onClick={() => {
-                    setActiveItem(item.label);
-                    close();
-                  }}
                 >
                   <Icon size={18} strokeWidth={2} aria-hidden="true" />
                   <span>{item.label}</span>
                   {item.badge && <span className="nav-badge">{item.badge}</span>}
-                </button>
+                </Link>
               </div>
             );
           })}
@@ -141,15 +138,38 @@ function Topbar({
   theme,
   toggleTheme,
   openMenu,
+  menuOpen,
+  closeMenu,
+  reportingPeriod,
+  setReportingPeriod,
 }: {
   search: string;
   setSearch: (value: string) => void;
   theme: "light" | "dark";
   toggleTheme: () => void;
   openMenu: () => void;
+  menuOpen: boolean;
+  closeMenu: () => void;
+  reportingPeriod: ReportingPeriod;
+  setReportingPeriod: (period: ReportingPeriod) => void;
 }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const ThemeIcon = theme === "light" ? Moon : Sun;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+        menuButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [closeMenu, menuOpen]);
+
   return (
     <header className="topbar">
       <Button
@@ -157,6 +177,9 @@ function Topbar({
         size="icon"
         className="mobile-menu-button"
         aria-label="Open navigation menu"
+        aria-expanded={menuOpen}
+        aria-controls="main-navigation"
+        ref={menuButtonRef}
         onClick={openMenu}
       >
         <Menu />
@@ -185,7 +208,11 @@ function Topbar({
         <label className="date-control">
           <CalendarDays size={15} aria-hidden="true" />
           <span className="sr-only">Reporting date range</span>
-          <select defaultValue="today" aria-label="Reporting date range">
+          <select
+            value={reportingPeriod}
+            onChange={(event) => setReportingPeriod(event.target.value as ReportingPeriod)}
+            aria-label="Reporting date range"
+          >
             <option value="today">Apr 23, 2024 – Apr 23, 2024</option>
             <option value="week">Apr 17, 2024 – Apr 23, 2024</option>
             <option value="month">Apr 1, 2024 – Apr 23, 2024</option>
@@ -227,7 +254,8 @@ function Topbar({
           variant="ghost"
           size="icon"
           className="theme-button"
-          aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}
+          aria-label="Toggle light and dark theme"
+          aria-pressed={theme === "dark"}
           onClick={toggleTheme}
         >
           <ThemeIcon />
@@ -300,11 +328,21 @@ function PanelHeading({
   );
 }
 
-function ChartPeriodSelect() {
+function ChartPeriodSelect({
+  value,
+  onChange,
+}: {
+  value: ReportingPeriod;
+  onChange: (period: ReportingPeriod) => void;
+}) {
   return (
     <label className="select-control">
       <span className="sr-only">Chart time period</span>
-      <select defaultValue="today" aria-label="Chart time period">
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value as ReportingPeriod)}
+        aria-label="Chart time period"
+      >
         <option value="today">Today</option>
         <option value="week">This week</option>
         <option value="month">This month</option>
@@ -497,11 +535,17 @@ function LinehaulRequests({
 }
 
 export default function Dashboard() {
+  return <DashboardPage />;
+}
+
+export function DashboardPage({ page = "Dashboard" }: { page?: string }) {
   const [search, setSearch] = useState("");
-  const [activeItem, setActiveItem] = useState("Dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>("today");
+  const [chartMetric, setChartMetric] = useState<ChartMetric>("requests");
+  const pathname = usePathname();
   const subscribeToTheme = (onChange: () => void) => {
     window.addEventListener("soc5-theme-change", onChange);
     window.addEventListener("storage", onChange);
@@ -532,8 +576,7 @@ export default function Dashboard() {
   return (
     <div className="app-shell">
       <Sidebar
-        activeItem={activeItem}
-        setActiveItem={setActiveItem}
+        pathname={pathname}
         open={menuOpen}
         close={() => setMenuOpen(false)}
       />
@@ -544,8 +587,14 @@ export default function Dashboard() {
           theme={theme}
           toggleTheme={toggleTheme}
           openMenu={() => setMenuOpen(true)}
+          menuOpen={menuOpen}
+          closeMenu={() => setMenuOpen(false)}
+          reportingPeriod={reportingPeriod}
+          setReportingPeriod={setReportingPeriod}
         />
         <main className="dashboard-main">
+          {page === "Dashboard" ? (
+            <>
           <div className="page-heading">
             <div>
               <h1>Logistics Control Center</h1>
@@ -573,18 +622,22 @@ export default function Dashboard() {
                       <>
                         <label className="select-control">
                           <span className="sr-only">Chart metric</span>
-                          <select defaultValue="requests" aria-label="Chart metric">
+                          <select
+                            value={chartMetric}
+                            onChange={(event) => setChartMetric(event.target.value as ChartMetric)}
+                            aria-label="Chart metric"
+                          >
                             <option value="requests">Requests</option>
                             <option value="trucks">Trucks</option>
                           </select>
                           <ChevronDown size={13} aria-hidden="true" />
                         </label>
-                        <ChartPeriodSelect />
+                        <ChartPeriodSelect value={reportingPeriod} onChange={setReportingPeriod} />
                       </>
                     }
                   />
                   <div className="chart-area">
-                    <RequestFlowChart />
+                    <RequestFlowChart metric={chartMetric} period={reportingPeriod} />
                   </div>
                 </section>
                 <section className="panel chart-panel volume-panel" aria-labelledby="volume-title">
@@ -593,10 +646,10 @@ export default function Dashboard() {
                     title="Hourly Outbound Volume"
                     subtitle="Trucks dispatched per hour"
                     id="volume-title"
-                    actions={<ChartPeriodSelect />}
+                    actions={<ChartPeriodSelect value={reportingPeriod} onChange={setReportingPeriod} />}
                   />
                   <div className="chart-area">
-                    <HourlyVolumeChart />
+                    <HourlyVolumeChart period={reportingPeriod} />
                   </div>
                 </section>
               </div>
@@ -616,6 +669,10 @@ export default function Dashboard() {
               />
             </aside>
           </div>
+            </>
+          ) : (
+            <ModulePage page={page} />
+          )}
         </main>
       </div>
     </div>
