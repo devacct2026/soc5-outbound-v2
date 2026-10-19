@@ -111,6 +111,73 @@ or server synchronization.
 - Function and tests: `supabase/functions/sync-intraday/index.ts`,
   `supabase/functions/sync-intraday/index_test.ts`.
 
+### V2 sync integration
+
+V2 has one authoritative sync implementation. The original Supabase Edge
+Function behavior is integrated into the server-only handlers below; deploying
+the original functions alongside them would create two write paths and is not
+supported.
+
+| Source function | V2 endpoint |
+|---|---|
+| `sync-clusters` | `POST /api/v1/integrations/clusters/sync` |
+| `sync-intraday` | `POST /api/v1/integrations/intraday/sync` |
+
+Both endpoints preserve the source caller contract: POST, the
+`x-sync-source: google-apps-script` allowlist, `x-sync-timestamp` epoch
+seconds, `x-sync-signature = HMAC-SHA256(secret, timestamp + "." + rawBody)`
+in lowercase hex, 300-second freshness, 1,000,000-byte body limit, and 1,000
+row limit. Cluster imports accept the source directory fields and preserve
+full backlog timestamps; last duplicate cluster names win and matching
+non-terminal requests receive audited backlog propagation. Intraday imports
+accept the source array, `rows`, `data`, and singleton payload forms plus the
+source field aliases, aggregate duplicate date/hour keys, skip non-transporting
+status rows, and upsert `(dispatch_date, hour)`.
+
+V2 configuration is deliberately separate from the source project:
+
+```text
+SOC5_SUPABASE_URL
+SOC5_SUPABASE_ANON_KEY
+SOC5_SUPABASE_SERVICE_ROLE_KEY       # server-only
+SOC5_CLUSTER_SYNC_SECRET              # server-only, cluster caller secret
+SOC5_INTRADAY_SYNC_SECRET             # server-only, intraday caller secret
+```
+
+Do not set these as `NEXT_PUBLIC_*`, expose them to the browser, or reuse the
+source project’s secret values. The Google Apps Script caller must set its
+`SYNC_URL` to the deployed V2 origin:
+
+```text
+https://<v2-origin>/api/v1/integrations/clusters/sync
+https://<v2-origin>/api/v1/integrations/intraday/sync
+```
+
+The caller keeps its existing time-driven trigger and sends the raw signed
+body. Use separate Apps Script properties/secrets for each endpoint, or use a
+new V2-only value in both V2 properties; never place a secret in script source
+or logs. Existing callers using the source field names remain compatible.
+
+Deployment and verification commands for a disposable V2 environment:
+
+```powershell
+npm ci
+# Apply the ordered files in supabase/migrations/ to the disposable V2 project.
+npm run build
+npm run build:api
+node dist-nest/nest/run.js
+```
+
+For a Next-hosted deployment, deploy the built Next application and set the
+same server-only variables in that host; for a separate Nest deployment, set
+`SOC5_API_PORT` and `SOC5_WEB_ORIGIN` as usual and point the Apps Script URLs at
+that API origin. No new migration is required: the existing forward-only V2
+migrations already provide the cluster upsert RPC, full
+`backlogs_timestamp`, audited propagation guards, `(dispatch_date, hour)`
+primary key, RLS, and realtime publication for `requests` and
+`intraday_dispatch`. Reapply no earlier migration and do not run the source
+project’s migration history against V2.
+
 ## Outbox, retries, scheduling and observability
 
 - `workflow_outbox` handles notification creation, SeaTalk provisioning,

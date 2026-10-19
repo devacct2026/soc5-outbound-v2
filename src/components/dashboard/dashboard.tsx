@@ -458,13 +458,15 @@ function ApprovalPipeline({ steps }: { steps: readonly PipelineStep[] }) {
 function RecentActivity({
   expanded,
   toggleExpanded,
+  data,
 }: {
   expanded: boolean;
   toggleExpanded: () => void;
+  data: readonly { title: string; detail: string; time: string; color: string }[];
 }) {
   const displayedActivities = expanded
     ? [
-        ...activities,
+        ...data,
         {
           title: "Request REQ-20240423-015 completed",
           detail: "Outbound to JHB - SIN",
@@ -472,7 +474,7 @@ function RecentActivity({
           color: "blue",
         },
       ]
-    : activities;
+    : data;
   return (
     <section className="panel activity-panel" aria-labelledby="activity-title">
       <div className="activity-heading">
@@ -566,6 +568,7 @@ export function DashboardPage({ page = "Dashboard" }: { page?: string }) {
   const shownRequests = live?.requests ?? requests;
   const shownKpis: readonly KpiItem[] = live?.kpis ?? kpis;
   const shownPipeline: readonly PipelineStep[] = live?.pipeline ?? pipeline;
+  const shownActivities = live?.activities ?? activities;
   const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>("today");
   const [chartMetric, setChartMetric] = useState<ChartMetric>("requests");
   const pathname = usePathname();
@@ -666,7 +669,7 @@ export function DashboardPage({ page = "Dashboard" }: { page?: string }) {
                     }
                   />
                   <div className="chart-area">
-                    <RequestFlowChart metric={chartMetric} period={reportingPeriod} />
+                    <RequestFlowChart metric={chartMetric} period={reportingPeriod} liveFlow={live?.flow} liveVolume={live?.volume} />
                   </div>
                 </section>
                 <section className="panel chart-panel volume-panel" aria-labelledby="volume-title">
@@ -678,7 +681,7 @@ export function DashboardPage({ page = "Dashboard" }: { page?: string }) {
                     actions={<ChartPeriodSelect value={reportingPeriod} onChange={setReportingPeriod} />}
                   />
                   <div className="chart-area">
-                    <HourlyVolumeChart period={reportingPeriod} />
+                    <HourlyVolumeChart period={reportingPeriod} liveVolume={live?.volume} />
                   </div>
                 </section>
               </div>
@@ -695,6 +698,7 @@ export function DashboardPage({ page = "Dashboard" }: { page?: string }) {
               <RecentActivity
                 expanded={activityExpanded}
                 toggleExpanded={() => setActivityExpanded(!activityExpanded)}
+                data={shownActivities}
               />
             </aside>
           </div>

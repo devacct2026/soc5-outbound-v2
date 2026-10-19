@@ -65,13 +65,13 @@ test("cluster sync: signature, source header, size/row limits, validation, last-
   assert.equal((await clusterSyncHandler(backend, syncRequest([row()], { source: "browser" }))).status, 403);
   assert.equal((await clusterSyncHandler(backend, syncRequest([row()], { ts: String(Math.floor(NOW.getTime() / 1000) - 301) }))).status, 401, "stale");
   assert.equal((await clusterSyncHandler(backend, syncRequest("{not json", { raw: "{not json" }))).status, 400);
-  assert.equal((await clusterSyncHandler(backend, syncRequest({ nope: 1 }))).status, 400);
+  assert.equal((await clusterSyncHandler(backend, syncRequest({ nope: 1 }))).status, 422);
   assert.equal((await clusterSyncHandler(backend, syncRequest(Array.from({ length: 1001 }, () => row())))).status, 413);
   assert.equal((await clusterSyncHandler(backend, syncRequest([{ cluster_name: "", region: "x" }]))).status, 422, "no valid rows");
   assert.equal((await clusterSyncHandler(makeBackend({ store, authenticate: async () => null }), syncRequest([row()]))).status, 503, "no secret configured = disabled");
   const ok = await clusterSyncHandler(backend, syncRequest([row({ backlogs: 1 }), row({ backlogs: 2 }), row({ cluster_name: "No Dock", dock_number: null, backlogs: "", backlogs_ts: "" }), row({ cluster_name: "Bad", backlogs: -3 }), row({ cluster_name: "Bad TS", backlogs_ts: "not a date" })]));
   assert.equal(ok.status, 200);
-  assert.deepEqual(await ok.json(), { success: true, received: 5, processed: 2, rejected: 2, duplicatesRemoved: 1, fields: ["cluster_name", "region", "dock_number", "backlogs", "backlogs_ts"] });
+  assert.deepEqual(await ok.json(), { success: true, received: 5, processed: 2, rejected: 2, duplicatesRemoved: 1, source: "cluster!A1:E1000", fields: ["cluster_name", "region", "dock_number", "backlogs", "backlogs_ts"] });
   const alpha = store.clusters.find((c) => c.name === "Alpha Hub")!;
   assert.equal(alpha.backlogs, 2, "last duplicate wins");
   assert.equal(alpha.backlogsTimestamp, "2026-10-19T08:30:15.000Z");
@@ -139,4 +139,17 @@ test("parseClusterRows is a pure validator", () => {
   assert.equal(out.rows[0].backlogs, 3);
   assert.equal(out.rejected, 3);
   assert.equal(out.duplicatesRemoved, 1);
+});
+
+test("cluster sync accepts source-compatible singleton payloads and hides database failures", async () => {
+  const { backend } = setup();
+  const singleton = await clusterSyncHandler(backend, syncRequest(row({ cluster_name: "Singleton" })));
+  assert.equal(singleton.status, 200);
+  assert.equal((await singleton.json()).processed, 1);
+
+  const failing = setup();
+  failing.store.importClusters = async () => { throw new Error("database unavailable"); };
+  const response = await clusterSyncHandler(failing.backend, syncRequest([row()]));
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), { error: "Unable to persist cluster data." });
 });

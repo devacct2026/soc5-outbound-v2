@@ -118,7 +118,7 @@ test("intraday sync: signature, source allowlist, skew, size/row limits, validat
     "junk",
   ]);
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { received: 7, processed: 1, rejected: 5 });
+  assert.deepEqual(await res.json(), { success: true, received: 7, processed: 1, rejected: 4 });
   const d = await store.intraday("2026-10-19");
   assert.equal(d[6].orderQty, 15, "duplicate date/hour keys aggregate");
   assert.equal(d[7].orderQty, 0);

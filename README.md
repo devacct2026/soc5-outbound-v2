@@ -33,8 +33,10 @@ npm run build
 
 The Playwright suite starts the local Next.js development server and exercises route navigation,
 dashboard filters, themes, keyboard interactions, and responsive layouts at desktop, tablet, and
-mobile widths. The dashboard pages still render local mock data; the backend below is not yet wired
-into the UI (see `docs/implementation-progress.md`).
+mobile widths. Signed-in dashboard data is loaded through the Fetch-compatible `/api/v1` Edge/API
+route surface; signed-out screens retain sample data so the UI remains usable before authentication.
+The operational module panels use the same API surface for requests, queues, notifications, users,
+intraday data, and reports.
 
 ## Backend (API, database, worker)
 

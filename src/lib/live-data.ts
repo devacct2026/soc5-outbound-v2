@@ -14,6 +14,20 @@ export interface ApiRequest {
   request_timestamp: string;
 }
 
+export interface ApiIntradayRow {
+  date: string;
+  hour: number;
+  orderQty: number;
+  syncedAt: string | null;
+}
+
+export interface LiveActivity {
+  title: string;
+  detail: string;
+  time: string;
+  color: "green" | "blue" | "red";
+}
+
 export interface ApiMetrics {
   total: number;
   awaiting_action: number;
@@ -56,6 +70,38 @@ export function mapRequest(r: ApiRequest): LinehaulRequest {
     status: statusLabel(r.status),
     eta: time(r.provide_time ?? r.request_timestamp),
   };
+}
+
+/** Build the dashboard activity rail from the newest request records returned by the API. */
+export function buildActivities(rows: ApiRequest[]): LiveActivity[] {
+  return rows.slice(0, 6).map((r) => {
+    const status = statusLabel(r.status);
+    const color: LiveActivity["color"] = status === "Rejected" ? "red" : status === "Pending" ? "blue" : "green";
+    return {
+      title: `Request ${r.id.slice(0, 8).toUpperCase()} is ${status.toLowerCase()}`,
+      detail: `${r.cluster} · ${r.region} · Dock ${r.dock_no}`,
+      time: time(r.request_timestamp),
+      color,
+    };
+  });
+}
+
+/** Convert the intraday Edge/API response into the chart view-model. */
+export function buildHourlyVolume(rows: ApiIntradayRow[]) {
+  return rows.map((r) => ({ hour: String(r.hour).padStart(2, "0"), trucks: r.orderQty }));
+}
+
+/** The request list is the only API contract that carries request timestamps, so use it for the flow chart. */
+export function buildRequestFlow(rows: ApiRequest[]) {
+  const counts = new Map<number, number>();
+  for (const row of rows) {
+    const hour = Number(new Intl.DateTimeFormat("en-US", { hour: "2-digit", hourCycle: "h23", timeZone: "Asia/Manila" }).format(new Date(row.request_timestamp)));
+    counts.set(hour, (counts.get(hour) ?? 0) + 1);
+  }
+  return Array.from({ length: 24 }, (_, hour) => ({
+    hour: `${String(hour).padStart(2, "0")}:00`,
+    requests: counts.get(hour) ?? 0,
+  }));
 }
 
 const PIPELINE: { label: string; statuses: string[]; color: "amber" | "sky" | "green" | "purple" | "blue" | "slate" | "red" }[] = [

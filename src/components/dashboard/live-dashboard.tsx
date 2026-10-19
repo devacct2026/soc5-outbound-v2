@@ -7,7 +7,7 @@ import { useCallback, useState, useSyncExternalStore } from "react";
 import { useLiveRefresh } from "@/lib/use-live";
 import { apiGet, clearToken, getToken } from "@/lib/api-client";
 import { SignInPanel } from "@/components/ops/sign-in";
-import { buildKpis, buildPipeline, mapRequest, type ApiMetrics, type ApiRequest } from "@/lib/live-data";
+import { buildActivities, buildHourlyVolume, buildKpis, buildPipeline, buildRequestFlow, mapRequest, type ApiIntradayRow, type ApiMetrics, type ApiRequest, type LiveActivity } from "@/lib/live-data";
 import type { LinehaulRequest } from "@/lib/dashboard-data";
 
 type Live = {
@@ -15,6 +15,9 @@ type Live = {
   pipeline: ReturnType<typeof buildPipeline>;
   kpis: ReturnType<typeof buildKpis>;
   updatedAt: Date;
+  activities: LiveActivity[];
+  flow: ReturnType<typeof buildRequestFlow>;
+  volume: ReturnType<typeof buildHourlyVolume>;
 };
 
 function subscribe(cb: () => void) {
@@ -33,13 +36,17 @@ export function useLiveDashboard() {
       const [list, metrics, intraday] = await Promise.all([
         apiGet<{ data: ApiRequest[] }>("/requests?limit=100"),
         apiGet<ApiMetrics>("/requests/metrics"),
-        apiGet<{ data: { orderQty: number }[] }>(`/dispatch/intraday?date=${today}`).catch(() => null),
+        apiGet<{ data: ApiIntradayRow[] }>(`/dispatch/intraday?date=${today}`).catch(() => null),
       ]);
+      const rows = list.data;
       setLive({
-        requests: list.data.map(mapRequest),
+        requests: rows.map(mapRequest),
         pipeline: buildPipeline(metrics),
         kpis: buildKpis(metrics, intraday ? intraday.data.reduce((s, r) => s + r.orderQty, 0) : null),
         updatedAt: new Date(),
+        activities: buildActivities(rows),
+        flow: buildRequestFlow(rows),
+        volume: intraday ? buildHourlyVolume(intraday.data) : [],
       });
       setError(null);
     } catch (e) {
