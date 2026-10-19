@@ -27,6 +27,7 @@ script:
   - npm run lint
   - npm run typecheck
   - npm run test:unit
+  - npm run test:nest        # NestJS API over real HTTP (compiled with tsconfig.nest.json)
   - npm run test:db          # replays ALL migrations on a throw-away cluster + RLS/constraint/audit tests
   - npm run build
   - npx playwright install --with-deps chromium

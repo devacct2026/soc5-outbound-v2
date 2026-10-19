@@ -117,3 +117,16 @@ Reasons: no live Supabase run, SeaTalk unverified, UI not wired, production conf
 4. Confirm Sheets columns, test with a disposable sheet.
 5. Run historical reconciliation preview on an exported non-production copy.
 6. Get approval of production values; add edge rate limiting and alert owners/runbooks; run Travis.
+
+## Architecture update: NestJS API + BullMQ/Redis (added at the user's request)
+
+Target: Next.js (UI) -> NestJS API -> Supabase (Postgres/Auth/RLS); BullMQ + Redis for workers; external integrations.
+
+Done (locally verified):
+- `src/nest/` NestJS app (`npm run start:api`, port `SOC5_API_PORT`, default 4000). Nest owns transport/DI only; all business rules are the existing `src/domain` and `src/server` code, reached through the framework-neutral route table `src/server/routes-table.ts`. The Next route handlers under `src/app/api` remain as an equivalent same-origin fallback; the Nest API is the intended primary.
+- `npm run test:nest` compiles with `tsconfig.nest.json` (decorators) and runs 3 tests over real HTTP: workflow, idempotent replay, route precedence, 405/404, 413, secure headers, fail-closed 503. PASS 3/3.
+- `src/server/worker/bullmq.ts`: BullMQ repeatable "tick" + concurrency-1 worker; enabled with `SOC5_QUEUE=bullmq` and `SOC5_REDIS_URL`. Redis is only the scheduler: the PostgreSQL transactional outbox stays authoritative (retries, backoff, dead letter, audit), so a Redis loss cannot lose or duplicate work. Processor wiring is unit-tested without Redis.
+
+Not verified: no Redis was available here, so `startBullWorker` has never run against a live Redis (stalled-job and scheduler behaviour untested). The frontend still uses mock data and does not yet call the Nest API (set `SOC5_WEB_ORIGIN` for CORS when it does). Two install scripts (`unrs-resolver`, `msgpackr-extract`) were blocked by npm policy; `msgpackr-extract` is an optional native speed-up for BullMQ and does not affect correctness.
+
+Updated test totals: unit 97/97, Nest 3/3, DB 6 SQL files, Playwright dashboard 4/4, 0 prod vulnerabilities.

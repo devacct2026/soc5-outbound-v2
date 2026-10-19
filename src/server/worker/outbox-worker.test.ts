@@ -129,3 +129,23 @@ test("lock ownership: a slow worker whose claim was reclaimed cannot overwrite t
   assert.equal(row.status, "COMPLETED", "stale updates are no-ops");
   assert.equal(row.lastError, null);
 });
+
+test("BullMQ processor wiring: runs one tick, housekeeping, and surfaces alerts/failures (no Redis needed)", async () => {
+  const { makeTickProcessor } = await import("./bullmq.ts");
+  const s = await seeded();
+  let housekept = 0;
+  const alerts: string[] = [];
+  const proc = makeTickProcessor({
+    port: new MemoryOutboxPort(s.store),
+    handlers: { SEATALK_ALERT: async () => ({ acknowledged: true }) },
+    housekeeping: async () => { housekept++; },
+    onAlert: (m) => alerts.push(m),
+    now: s.now,
+  });
+  const r = await proc();
+  assert.equal(r.completed, 1);
+  assert.equal(housekept, 1);
+  // a port failure propagates so BullMQ records the job as failed
+  const broken = makeTickProcessor({ port: { ...new MemoryOutboxPort(s.store), claim: async () => { throw new Error("db down"); } } as never, handlers: { SEATALK_ALERT: async () => ({ acknowledged: true }) } });
+  await assert.rejects(broken(), /db down/);
+});

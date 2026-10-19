@@ -44,6 +44,29 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const handlers = buildHandlers(env, store);
   const cleanup = makeCleanupRunner(rest);
   const intervalMs = Number(env.WORKER_INTERVAL_SECONDS ?? 15) * 1000;
+  // BullMQ + Redis scheduling (architecture target). The DB outbox remains authoritative.
+  if (env.SOC5_QUEUE === "bullmq" && !argv.includes("--once")) {
+    const redisUrl = env.SOC5_REDIS_URL;
+    if (!redisUrl) {
+      console.error("worker: SOC5_REDIS_URL is required when SOC5_QUEUE=bullmq");
+      return 2;
+    }
+    const { startBullWorker } = await import("./bullmq.ts");
+    const { Redis: IORedis } = await import("ioredis");
+    const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+    const handle = await startBullWorker({
+      connection,
+      intervalMs,
+      deps: { port, handlers, onAlert: (m) => console.error(`ALERT ${m}`), housekeeping: cleanup },
+    });
+    await new Promise<void>((resolve) => {
+      process.once("SIGTERM", () => resolve());
+      process.once("SIGINT", () => resolve());
+    });
+    await handle.close();
+    connection.disconnect();
+    return 0;
+  }
   let stop = false;
   process.on("SIGTERM", () => (stop = true));
   process.on("SIGINT", () => (stop = true));

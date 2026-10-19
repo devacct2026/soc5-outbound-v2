@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist-nest",
+    "rootDir": "src",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "ES2022",
+    "lib": ["es2023", "dom"],
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "erasableSyntaxOnly": false,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "jsx": "preserve",
+    "incremental": false,
+    "plugins": [],
+    "paths": {}
+  },
+  "include": ["src/nest/**/*.ts", "src/server/**/*.ts", "src/domain/**/*.ts"],
+  "exclude": ["node_modules", "dist-nest", "src/app", "src/components", "src/lib"]
+}
