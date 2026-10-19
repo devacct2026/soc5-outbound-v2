@@ -12,6 +12,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { ActionQueue } from "./action-queue";
+import { IntradayPanel, ReportsPanel } from "@/components/ops/reports-panel";
+import { NotificationsPanel } from "@/components/ops/notifications-panel";
+import { RequestsWorkspace } from "@/components/ops/requests-workspace";
+import { SessionGate } from "@/components/ops/session-gate";
+import { UsersPanel } from "@/components/ops/users-panel";
 
 const modules: Record<
   string,
@@ -115,7 +120,13 @@ export function ModulePage({ page }: { page: string }) {
           </article>
         ))}
       </div>
+      <SessionGate />
       {["Queue", "Approvals", "Docking"].includes(page) && <ActionQueue page={page} />}
+      {page === "Requests" && <RequestsWorkspace />}
+      {page === "Notifications" && <NotificationsPanel />}
+      {page === "Intraday KPI" && <IntradayPanel />}
+      {page === "Reports" && <ReportsPanel />}
+      {page === "Users" && <UsersPanel />}
       <section className="panel module-content" aria-labelledby="module-content-title">
         <div className="module-content-heading">
           <span className="panel-icon"><Icon size={19} aria-hidden="true" /></span>

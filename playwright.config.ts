@@ -15,5 +15,15 @@ export default defineConfig({
     url: "http://127.0.0.1:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    // Public-by-design realtime settings so the WebSocket path can be exercised against a mocked socket.
+    env: {
+      NEXT_PUBLIC_SOC5_REALTIME_URL: "https://realtime.test",
+      NEXT_PUBLIC_SOC5_REALTIME_ANON_KEY: "anon-test-key",
+      // E2E must never reach a real project: blank values override anything in .env.local, so unmocked API calls
+      // answer 503 locally instead of contacting a configured backend.
+      SOC5_SUPABASE_URL: "",
+      SOC5_SUPABASE_ANON_KEY: "",
+      SOC5_SUPABASE_SERVICE_ROLE_KEY: "",
+    },
   },
 });

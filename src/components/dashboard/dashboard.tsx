@@ -43,6 +43,8 @@ import { HourlyVolumeChart, RequestFlowChart, type ChartMetric, type ReportingPe
 import { ModulePage } from "./module-page";
 import { RequestsTable } from "./requests-table";
 import { LiveConnect, useLiveDashboard } from "./live-dashboard";
+import { useUnreadCount } from "@/components/ops/notifications-panel";
+import { SessionGate } from "@/components/ops/session-gate";
 
 type KpiItem = { label: string; value: string; change: string; direction: string; color: string; points: string };
 
@@ -84,6 +86,7 @@ function Sidebar({
   open: boolean;
   close: () => void;
 }) {
+  const unread = useUnreadCount();
   return (
     <>
       {open && (
@@ -111,6 +114,8 @@ function Sidebar({
           {navigation.map((item) => {
             const Icon = item.icon;
             const selected = pathname === item.href;
+            // Signed in: the sample badges are replaced by the real unread count (hidden at zero); signed out they are unchanged.
+            const badge = unread === null ? item.badge : item.label === "Notifications" && unread > 0 ? String(unread) : undefined;
             return (
               <div className={item.divider ? "nav-divider" : undefined} key={item.label}>
                 <Link
@@ -120,7 +125,7 @@ function Sidebar({
                 >
                   <Icon size={18} strokeWidth={2} aria-hidden="true" />
                   <span>{item.label}</span>
-                  {item.badge && <span className="nav-badge">{item.badge}</span>}
+                  {badge && <span className="nav-badge">{badge}</span>}
                 </Link>
               </div>
             );
@@ -157,6 +162,8 @@ function Topbar({
   setReportingPeriod: (period: ReportingPeriod) => void;
 }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const unread = useUnreadCount(); // null when signed out: the approved sample content is unchanged
+  const bellCount = unread === null ? 3 : unread;
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const ThemeIcon = theme === "light" ? Moon : Sun;
 
@@ -227,17 +234,18 @@ function Topbar({
             variant="ghost"
             size="icon"
             className="topbar-icon-button"
-            aria-label="Notifications, 3 unread"
+            aria-label={`Notifications, ${bellCount} unread`}
             aria-expanded={notificationsOpen}
             onClick={() => setNotificationsOpen(!notificationsOpen)}
           >
             <Bell />
-            <span className="notification-count">3</span>
+            {bellCount > 0 && <span className="notification-count">{bellCount > 99 ? "99+" : bellCount}</span>}
           </Button>
           {notificationsOpen && (
             <div className="notification-popover" role="status">
               <strong>Notifications</strong>
-              <span>3 updates need your attention.</span>
+              <span>{bellCount === 0 ? "You are all caught up." : `${bellCount} update${bellCount === 1 ? "" : "s"} need${bellCount === 1 ? "s" : ""} your attention.`}</span>
+              {unread !== null && <Link href="/notifications" onClick={() => setNotificationsOpen(false)}>View notifications</Link>}
               <button type="button" onClick={() => setNotificationsOpen(false)}>
                 Dismiss
               </button>
@@ -625,6 +633,7 @@ export function DashboardPage({ page = "Dashboard" }: { page?: string }) {
               <LiveConnect signedIn={signedIn} error={liveError} />
             </div>
           </div>
+          <SessionGate />
           <section className="kpi-grid" aria-label="Key performance indicators">
             {shownKpis.map((item) => <KpiCard item={item} key={item.label} />)}
           </section>

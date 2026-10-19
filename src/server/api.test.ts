@@ -418,3 +418,15 @@ test("regression: oversized JSON bodies are refused with 413 before parsing", as
   }));
   assert.equal(res.status, 413);
 });
+
+test("status filter: FTE MM and Doc Officer see REROUTED requests under PENDING (display rule); FTE Ops filters exactly", async () => {
+  const { backend, store } = setup();
+  const a = await create(backend);
+  store.requests.set(a.id, { ...store.requests.get(a.id)!, status: "REROUTED" });
+  const ids = async (who: string, status: string) => (await call(backend, listHandler, who, "GET", `/r?status=${status}`)).body.data.map((r: { id: string }) => r.id);
+  assert.deepEqual(await ids("mm1", "PENDING"), [a.id]);
+  assert.deepEqual(await ids("doc1", "PENDING"), [a.id]);
+  assert.deepEqual(await ids("ops1", "PENDING"), [], "FTE Ops sees the stored status");
+  assert.deepEqual(await ids("ops1", "REROUTED"), [a.id]);
+  assert.deepEqual(await ids("mm1", "REQUESTED"), []);
+});

@@ -150,7 +150,7 @@ export class MemoryStore implements Store {
     const tz = DEFAULT_SCHEDULE.timezone;
     const rows = this.visible(actor).filter(
       (r) =>
-        (!q.status || r.status === q.status) &&
+        (!q.status || r.status === q.status || (q.status === "PENDING" && r.status === "REROUTED" && (actor.role === "fte_mm" || actor.role === "doc_officer"))) &&
         (!q.search || (r.plateNumber ?? "").toLowerCase().includes(q.search.toLowerCase())) &&
         (!q.dateFrom || localDate(r.requestTimestamp, tz) >= q.dateFrom) &&
         (!q.dateTo || localDate(r.requestTimestamp, tz) <= q.dateTo),

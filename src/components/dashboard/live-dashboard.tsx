@@ -3,8 +3,10 @@
 // Live data overlay for the approved dashboard. Signed out: the existing mock data
 // is shown unchanged. Signed in: real requests, pipeline counts and KPI cards from
 // /api/v1, refreshed every 30 s (polling until a Supabase Realtime client is added).
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { apiGet, clearToken, getToken, signIn } from "@/lib/api-client";
+import { useCallback, useState, useSyncExternalStore } from "react";
+import { useLiveRefresh } from "@/lib/use-live";
+import { apiGet, clearToken, getToken } from "@/lib/api-client";
+import { SignInPanel } from "@/components/ops/sign-in";
 import { buildKpis, buildPipeline, mapRequest, type ApiMetrics, type ApiRequest } from "@/lib/live-data";
 import type { LinehaulRequest } from "@/lib/dashboard-data";
 
@@ -14,8 +16,6 @@ type Live = {
   kpis: ReturnType<typeof buildKpis>;
   updatedAt: Date;
 };
-
-const REFRESH_MS = 30_000;
 
 function subscribe(cb: () => void) {
   window.addEventListener("soc5-auth-change", cb);
@@ -47,26 +47,14 @@ export function useLiveDashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!signedIn) return;
-    const first = setTimeout(refresh, 0);
-    const timer = setInterval(refresh, REFRESH_MS);
-    return () => {
-      clearTimeout(first);
-      clearInterval(timer);
-    };
-  }, [signedIn, refresh]);
+  // WebSocket-first: refetch on realtime changes and after reconnects; poll only while the socket is down.
+  useLiveRefresh(refresh, ["requests", "intraday_dispatch"], signedIn);
 
   return { signedIn, live: signedIn ? live : null, error: signedIn ? error : null, refresh };
 }
 
 export function LiveConnect({ signedIn, error }: { signedIn: boolean; error: string | null }) {
   const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
   if (signedIn) {
     return (
       <span className="live-connect">
@@ -78,35 +66,5 @@ export function LiveConnect({ signedIn, error }: { signedIn: boolean; error: str
   if (!open) {
     return <button type="button" className="text-link" onClick={() => setOpen(true)}>Connect live data</button>;
   }
-  return (
-    <form
-      className="live-connect"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setBusy(true);
-        setMessage(null);
-        try {
-          await signIn(email, password);
-          setPassword("");
-          setOpen(false);
-        } catch (err) {
-          setMessage(err instanceof Error ? err.message : "Sign-in failed");
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      <label>
-        <span className="sr-only">Email</span>
-        <input type="email" required autoComplete="username" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      </label>{" "}
-      <label>
-        <span className="sr-only">Password</span>
-        <input type="password" required autoComplete="current-password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      </label>{" "}
-      <button type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>{" "}
-      <button type="button" className="text-link" onClick={() => setOpen(false)}>Cancel</button>
-      {message && <small role="alert"> {message}</small>}
-    </form>
-  );
+  return <SignInPanel onClose={() => setOpen(false)} />;
 }

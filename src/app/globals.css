@@ -1903,3 +1903,83 @@
     font-size: 9px;
   }
 }
+
+/* ------------------------------------------------------------------ ops screens (additive; existing selectors untouched) */
+.ops-form { display: grid; gap: 10px; margin: 14px 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.ops-form h3, .module-content h3 { margin: 0; color: var(--foreground); font-size: 13px; }
+.ops-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.ops-field { display: grid; gap: 4px; position: relative; color: var(--muted-foreground); font-size: 10px; font-weight: 600; }
+.ops-field input, .ops-field select, .ops-field textarea, .ops-inline select, .ops-signin input, .ops-inline-form input, .ops-inline-form select, .ops-signin select {
+  min-height: 30px; padding: 4px 8px; border: 1px solid var(--input); border-radius: 6px; background: var(--card); color: var(--foreground); font-size: 12px;
+}
+.ops-field textarea { min-height: 70px; }
+.ops-field output { padding: 6px 0; color: var(--foreground); font-size: 12px; }
+.ops-error { margin: 0; color: var(--destructive); font-size: 11px; }
+.ops-notice[data-kind="ok"] { color: var(--green); }
+.ops-notice[data-kind="error"] { color: var(--destructive); }
+.ops-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin: 12px 0; }
+.ops-inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 11px; }
+.ops-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ops-btn { min-height: 30px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); cursor: pointer; font-size: 12px; font-weight: 600; }
+.ops-btn:hover:not(:disabled) { background: var(--accent); }
+.ops-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+.ops-primary { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
+.ops-primary:hover:not(:disabled) { background: var(--primary); filter: brightness(1.08); }
+.ops-pager { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 10px; color: var(--muted-foreground); font-size: 11px; }
+.ops-table td, .ops-table th { vertical-align: top; }
+.ops-row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ops-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--muted); color: var(--foreground); font-size: 10px; font-weight: 700; }
+.ops-badge[data-status="DOCKED"], .ops-badge[data-status="ACTIVE"], .ops-badge[data-status="REQUESTED"] { background: color-mix(in srgb, var(--green) 18%, transparent); }
+.ops-badge[data-status="REJECTED"], .ops-badge[data-status="CANCELLED"], .ops-badge[data-status="DISABLED"] { background: color-mix(in srgb, var(--red) 16%, transparent); }
+.ops-badge[data-status="PENDING"], .ops-badge[data-status="REROUTED"], .ops-badge[data-status="PENDING_APPROVAL"] { background: color-mix(in srgb, var(--amber) 22%, transparent); }
+.ops-details { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 6px 0 12px; font-size: 11px; }
+.ops-details dt { color: var(--muted-foreground); }
+.ops-details dd { margin: 0; }
+.ops-history { margin: 6px 0 0; padding-left: 18px; font-size: 11px; }
+.ops-bulk { margin: 8px 0; font-size: 12px; }
+.ops-options { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; display: grid; margin: 0; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); list-style: none; box-shadow: var(--panel-shadow); }
+.ops-options button { width: 100%; padding: 6px; text-align: left; white-space: normal; }
+.ops-inline-form { display: block; margin-top: 6px; }
+.ops-banner { margin-bottom: 12px; font-size: 12px; }
+.ops-secret { display: grid; gap: 6px; margin: 10px 0; padding: 10px; border: 1px solid var(--amber); border-radius: 8px; font-size: 12px; }
+.ops-secret code { font-family: var(--font-mono), monospace; font-size: 14px; user-select: all; }
+.ops-summary { margin: 10px 0; font-size: 13px; }
+.ops-hint { display: block; margin-top: 4px; color: var(--muted-foreground); font-size: 10px; }
+.ops-tabs { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 6px; }
+.ops-tabs [data-active="true"] { text-decoration: underline; }
+.ops-unread strong { color: var(--foreground); }
+.ops-read { color: var(--muted-foreground); }
+.ops-bars { display: grid; gap: 4px; margin: 8px 0; padding: 0; list-style: none; }
+.ops-bars li { display: grid; grid-template-columns: 52px 1fr 52px; align-items: center; gap: 8px; font-size: 11px; }
+.ops-bar { display: block; height: 10px; min-width: 1px; border-radius: 3px; background: var(--primary); }
+.ops-bar-value { text-align: right; font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* printable LH label: original template + percentage coordinates */
+.ops-label-root { position: fixed; z-index: 60; inset: 0; display: grid; place-items: center; padding: 16px; background: rgb(13 24 42 / 55%); }
+.ops-label-dialog { width: min(49rem, 100%); max-height: calc(100dvh - 32px); overflow: auto; border-radius: 12px; background: #f4f7f8; }
+.ops-label-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #fff; color: #26313a; }
+.ops-label-preview { padding: clamp(0.75rem, 4vw, 2rem); }
+.ops-label { position: relative; width: min(100%, 48rem); margin: 0 auto; aspect-ratio: 16 / 9; container-type: inline-size; background: #fff; }
+.ops-label-img { display: block; width: 100%; height: auto; }
+.ops-label-field { position: absolute; z-index: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; box-sizing: border-box; padding: 0 0.5%; text-align: center; font: 700 1em/1.05 Arial, Helvetica, sans-serif; color: #111; overflow-wrap: anywhere; }
+.ops-fit { display: block; width: 100%; }
+.ops-label-field.plate { top: 10%; left: 62.8%; width: 34%; height: 8%; font-size: 5cqw; }
+.ops-label-field.driver { top: 28.5%; left: 3.2%; width: 21%; height: 18.5%; font-size: 4.2cqw; }
+.ops-label-field.dock { top: 28.5%; left: 27.5%; width: 21%; height: 18.5%; font-size: 9cqw; }
+.ops-label-field.time { top: 28.5%; left: 51.8%; width: 20.8%; height: 18.5%; font-size: 4cqw; }
+.ops-label-field.load { top: 60%; height: 21.5%; font-size: 6cqw; }
+.ops-label-field.load-single { left: 5%; width: 68.5%; }
+.ops-label-field.load-left { left: 4.2%; width: 33%; }
+.ops-label-field.load-right { left: 39.6%; width: 33%; }
+.ops-label-field.load-second { left: 27.6%; width: 21.2%; }
+.ops-label-field.load-third { left: 4%; width: 21.2%; }
+.ops-label-field.load-first { left: 51.1%; width: 21.2%; }
+@media print {
+  html:has(.truck-label-print-root), body:has(.truck-label-print-root) { min-height: 0 !important; height: auto !important; overflow: visible !important; background: white !important; }
+  body:has(.truck-label-print-root) > :not(.truck-label-print-root) { display: none !important; }
+  .truck-label-print-root { print-color-adjust: exact; -webkit-print-color-adjust: exact; position: static !important; display: block !important; padding: 0 !important; background: transparent !important; }
+  .truck-label-print-root .print-dialog { width: 100% !important; max-height: none !important; overflow: visible !important; border-radius: 0 !important; background: #fff !important; }
+  .truck-label-print-root .print-toolbar { display: none !important; }
+  .truck-label-print-root .print-preview { padding: 0 !important; background: #fff !important; }
+}

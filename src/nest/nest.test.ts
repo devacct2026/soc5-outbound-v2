@@ -93,3 +93,32 @@ test("NestJS API fails closed (503) without a configured backend", async () => {
     await app.close();
   }
 });
+
+test("NestJS serves the parity routes with the same fail-closed behaviour (auth flows, sync endpoints, presence, users)", async () => {
+  const { app, base } = await boot();
+  const off = await boot(false);
+  try {
+    // Configured backend but no sign-in services / SeaTalk / sync secrets: every optional surface is explicitly off, never open.
+    for (const [method, path] of [
+      ["POST", "/api/v1/auth/backroom/login"], ["POST", "/api/v1/auth/otp/request"], ["GET", "/api/v1/auth/google/start"],
+      ["GET", "/api/v1/auth/seatalk/config"], ["POST", "/api/v1/access-requests"],
+    ] as const) {
+      assert.equal((await call(base, null, method, path, method === "POST" ? {} : undefined)).status, 503, `${method} ${path}`);
+    }
+    assert.equal((await call(base, null, "POST", "/api/v1/integrations/clusters/sync", [])).status, 503, "cluster sync disabled without a secret");
+    assert.equal((await call(base, "ops1", "POST", "/api/v1/presence/heartbeat")).status, 503, "no approval provider configured");
+    assert.equal((await call(base, "pic1", "GET", "/api/v1/users")).status, 503);
+    assert.equal((await call(base, null, "GET", "/api/v1/auth/status")).status, 503);
+    // Authenticated reads of the new shapes work over real HTTP.
+    const n = await call(base, "ops1", "GET", "/api/v1/notifications?limit=5");
+    assert.deepEqual(await n.json(), { data: [], unread: 0, has_more: false });
+    assert.equal((await call(base, "ops1", "GET", "/api/v1/notifications?limit=500")).status, 422);
+    assert.equal((await call(base, "pic1", "GET", "/api/v1/clusters?search=zz")).status, 422);
+    for (const [method, path] of [["POST", "/api/v1/auth/backroom/login"], ["GET", "/api/v1/users"], ["POST", "/api/v1/presence/heartbeat"]] as const) {
+      assert.equal((await call(off.base, "ops1", method, path, method === "POST" ? {} : undefined)).status, 503, `unconfigured ${path}`);
+    }
+  } finally {
+    await app.close();
+    await off.app.close();
+  }
+});

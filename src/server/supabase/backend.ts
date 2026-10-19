@@ -163,7 +163,8 @@ export class SupabaseStore implements Store {
 
   async listRequests(actor: Actor, l: ListQuery) {
     let f = this.scope(actor);
-    if (l.status) f += `&status=eq.${q(l.status)}`;
+    // FTE MM / Doc Officer see REROUTED as PENDING (display rule), so the PENDING filter must include it for them.
+    if (l.status) f += l.status === "PENDING" && (actor.role === "fte_mm" || actor.role === "doc_officer") ? "&status=in.(PENDING,REROUTED)" : `&status=eq.${q(l.status)}`;
     if (l.search) f += `&plate_number=ilike.*${q(l.search)}*`;
     if (l.dateFrom || l.dateTo) {
       const tz = DEFAULT_SCHEDULE.timezone;

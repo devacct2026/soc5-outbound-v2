@@ -7,7 +7,9 @@ const row = (status: string, extra: Record<string, unknown> = {}) => ({
 
 async function signIn(page: Page, role: string, status: string, extra: Record<string, unknown> = {}) {
   await page.route("**/api/v1/auth/login", (r) => r.fulfill({ json: { access_token: "x".repeat(40), expires_in: 3600 } }));
-  await page.route("**/api/v1/auth/me", (r) => r.fulfill({ json: { id: "me-1", role, is_admin: false, reporting_permission: false } }));
+  await page.route("**/api/v1/auth/status", (r) => r.fulfill({ json: { account_status: "ACTIVE", role, must_change_password: false } }));
+  await page.route("**/api/v1/auth/me", (r) => r.fulfill({ json: { id: "me-1", role, is_admin: false, reporting_permission: false, must_change_password: false } }));
+  await page.route("**/api/v1/notifications*", (r) => r.fulfill({ json: { data: [], unread: 0, has_more: false } }));
   await page.route("**/api/v1/requests/queue*", (r) => r.fulfill({ json: { data: [row(status, extra)], has_more: false, next_cursor: null, limit: 50 } }));
   await page.route("**/api/v1/requests?*", (r) => r.fulfill({ json: { data: [], has_more: false, next_cursor: null, limit: 100 } }));
   await page.route("**/api/v1/requests/metrics", (r) => r.fulfill({ json: { total: 0, awaiting_action: 0, by_status: {} } }));
