@@ -42,7 +42,7 @@ select pg_temp.ok((select string_agg(right(id::text,2), ',' order by created_at 
   select * from queue_requests('00000000-0000-0000-0000-0000000000b1','fte_ops',1)) s) = '08', 'page 1');
 select pg_temp.ok((select string_agg(right(id::text,2), ',') from queue_requests('00000000-0000-0000-0000-0000000000b1','fte_ops',1,
   (select created_at from requests where id='11111111-1111-1111-1111-111111111108'), '11111111-1111-1111-1111-111111111108')) = '03', 'page 2 resumes after cursor');
-select pg_temp.ok((select count(*) from queue_requests('00000000-0000-0000-0000-0000000000b1','fte_ops',100000)) <= 100, 'server-side max page size');
+select pg_temp.ok((select count(*) from queue_requests('00000000-0000-0000-0000-0000000000b1','fte_ops',100000)) <= 101, 'server-side hard cap (100 + look-ahead)');
 
 -- RLS as browser roles ---------------------------------------------------
 select set_config('request.jwt.claim.sub', :'a1', false);

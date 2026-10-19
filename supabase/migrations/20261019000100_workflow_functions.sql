@@ -117,7 +117,7 @@ language sql stable security invoker set search_path = public as $$
     )
     and (p_cursor_ts is null or (r.created_at, r.id) < (p_cursor_ts, p_cursor_id))
   order by r.created_at desc, r.id desc
-  limit least(greatest(p_limit, 1), 100)
+  limit least(greatest(p_limit, 1), 101)  -- 100 max page + 1 look-ahead row
 $$;
 
 -- --------------------------------------------------------------------- KPI
