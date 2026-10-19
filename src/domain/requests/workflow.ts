@@ -27,6 +27,10 @@ export interface Actor {
   id: string;
   role: Role;
   active: boolean;
+  /** Server-side administrator flag (never client supplied). */
+  isAdmin?: boolean;
+  /** Explicit reporting permission, independent of role (KPI-6). */
+  reportingPermission?: boolean;
 }
 
 export interface WorkflowRequest {
@@ -40,6 +44,8 @@ export interface WorkflowRequest {
   rejectionRemarks: string | null;
   approvalVersion: number;
   approvalCorrelationId: string;
+  /** Present once a driver is assigned (DOCKING queue routing). */
+  driverId?: string | null;
 }
 
 export interface Context {
@@ -53,7 +59,11 @@ export type WorkflowErrorCode =
   | "FORBIDDEN"
   | "INVALID_STATE"
   | "REMARKS_REQUIRED"
-  | "NOT_CORRECTABLE";
+  | "NOT_CORRECTABLE"
+  | "VALIDATION_FAILED"
+  | "NO_DRIVER_ASSIGNED"
+  | "DRIVER_ALREADY_ASSIGNED"
+  | "JUSTIFICATION_REQUIRED";
 
 export interface WorkflowError {
   ok: false;
@@ -61,7 +71,7 @@ export interface WorkflowError {
 }
 
 export interface RequestEvent {
-  type: "REQUEST_REJECTED" | "REQUEST_RESUBMITTED";
+  type: EventType;
   requestId: string;
   actorId: string;
   creatorId: string;
@@ -75,12 +85,29 @@ export interface RequestEvent {
   returnRole: string | null;
   approvalVersion: number;
   correlationId: string;
+  /** Extra audit detail: field-level before/after, driver ids, override justification. */
+  metadata?: Record<string, unknown>;
 }
+
+export type EventType =
+  | "REQUEST_CREATED"
+  | "REQUEST_UPDATED"
+  | "REQUEST_APPROVED"
+  | "REQUEST_REJECTED"
+  | "REQUEST_RESUBMITTED"
+  | "REQUEST_CANCELLED"
+  | "TRUCK_ASSIGNED"
+  | "DRIVER_ASSIGNED"
+  | "DRIVER_REASSIGNED"
+  | "TRUCK_DOCKED"
+  | "DOCKED_EDITED"
+  | "ADMIN_OVERRIDE";
 
 export interface NotificationIntent {
   /** Deterministic key so retries never create duplicate notifications. */
   dedupeKey: string;
   event: RequestEvent["type"];
+  title?: string;
   recipientUserId?: string;
   recipientRole?: Role;
 }
@@ -94,15 +121,16 @@ export interface WorkflowSuccess {
 
 export type WorkflowResult = WorkflowSuccess | WorkflowError;
 
-const fail = (code: WorkflowErrorCode): WorkflowError => ({ ok: false, code });
+export const fail = (code: WorkflowErrorCode): WorkflowError => ({ ok: false, code });
 
-function buildEvent(
+export function buildEvent(
   type: RequestEvent["type"],
   before: WorkflowRequest,
   after: WorkflowRequest,
   actor: Actor,
   remarks: string | null,
   ctx: Context,
+  metadata?: Record<string, unknown>,
 ): RequestEvent {
   return {
     type,
@@ -119,13 +147,15 @@ function buildEvent(
     returnRole: after.rejectionReturnRole,
     approvalVersion: after.approvalVersion,
     correlationId: ctx.correlationId,
+    ...(metadata ? { metadata } : {}),
   };
 }
 
-function notify(
+export function notify(
   event: RequestEvent,
   recipients: { userId?: string; role?: Role }[],
   extra: string[] = [],
+  title?: string,
 ): NotificationIntent[] {
   const seen = new Set<string>();
   const out: NotificationIntent[] = [];
@@ -141,6 +171,7 @@ function notify(
     out.push({
       dedupeKey,
       event: event.type,
+      ...(title ? { title } : {}),
       recipientUserId: r.userId,
       recipientRole: r.role,
     });
@@ -293,6 +324,9 @@ export function isActionableForRole(
       return role === "fte_ops";
     case "REQUESTED":
       return role === "fte_mm";
+    case "DOCKING":
+      if (role === "doc_officer") return !request.driverId;
+      return role === "ops_pic" && !!request.driverId && userId === request.createdBy;
     case "REJECTED":
       if (request.rejectionDisposition === "RETURN_TO_OPS_PIC") {
         return role === "ops_pic" && userId === request.createdBy;
