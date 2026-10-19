@@ -42,6 +42,9 @@ import {
 import { HourlyVolumeChart, RequestFlowChart, type ChartMetric, type ReportingPeriod } from "./charts";
 import { ModulePage } from "./module-page";
 import { RequestsTable } from "./requests-table";
+import { LiveConnect, useLiveDashboard } from "./live-dashboard";
+
+type KpiItem = { label: string; value: string; change: string; direction: string; color: string; points: string };
 
 const navigation = [
   { label: "Dashboard", href: "/", icon: House },
@@ -265,7 +268,7 @@ function Topbar({
   );
 }
 
-function KpiCard({ item }: { item: (typeof kpis)[number] }) {
+function KpiCard({ item }: { item: KpiItem }) {
   const iconByLabel = {
     "Pending Requests": FileText,
     "Approved Today": CircleCheck,
@@ -274,7 +277,7 @@ function KpiCard({ item }: { item: (typeof kpis)[number] }) {
     "Intraday Volume": ChartNoAxesColumnIncreasing,
     "SLA Risk": ShieldAlert,
   };
-  const Icon = iconByLabel[item.label];
+  const Icon = iconByLabel[item.label as keyof typeof iconByLabel] ?? FileText;
   return (
     <article className={`kpi-card kpi-${item.color}`}>
       <div className="kpi-top">
@@ -288,10 +291,16 @@ function KpiCard({ item }: { item: (typeof kpis)[number] }) {
       </div>
       <div className="kpi-bottom">
         <div className="kpi-trend">
-          <span className="trend-value">
-            <span aria-hidden="true">▲</span> {item.change}
-          </span>
-          <span className="trend-caption">vs. yesterday</span>
+          {item.change ? (
+            <>
+              <span className="trend-value">
+                <span aria-hidden="true">▲</span> {item.change}
+              </span>
+              <span className="trend-caption">vs. yesterday</span>
+            </>
+          ) : (
+            <span className="trend-caption">live count</span>
+          )}
         </div>
         <svg className="sparkline" viewBox="0 0 84 32" role="img" aria-label={`${item.label} trend`}>
           <polyline points={item.points} />
@@ -396,7 +405,9 @@ function DockStatus() {
   );
 }
 
-function ApprovalPipeline() {
+type PipelineStep = { label: string; count: number; percent: number; color: keyof typeof statusColors };
+
+function ApprovalPipeline({ steps }: { steps: readonly PipelineStep[] }) {
   return (
     <section className="panel pipeline-panel" aria-labelledby="pipeline-title">
       <PanelHeading
@@ -406,7 +417,7 @@ function ApprovalPipeline() {
         id="pipeline-title"
       />
       <ul className="pipeline-list">
-        {pipeline.map((step) => (
+        {steps.map((step) => (
           <li className="pipeline-row" key={step.label}>
             <span
               className="pipeline-dot"
@@ -543,6 +554,10 @@ export function DashboardPage({ page = "Dashboard" }: { page?: string }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const { signedIn, live, error: liveError } = useLiveDashboard();
+  const shownRequests = live?.requests ?? requests;
+  const shownKpis: readonly KpiItem[] = live?.kpis ?? kpis;
+  const shownPipeline: readonly PipelineStep[] = live?.pipeline ?? pipeline;
   const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>("today");
   const [chartMetric, setChartMetric] = useState<ChartMetric>("requests");
   const pathname = usePathname();
@@ -602,11 +617,16 @@ export function DashboardPage({ page = "Dashboard" }: { page?: string }) {
             </div>
             <div className="live-status">
               <span><i />Live Data</span>
-              <small>Last updated today, 10:24 AM</small>
+              <small>
+                {live
+                  ? `Last updated ${live.updatedAt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`
+                  : "Last updated today, 10:24 AM"}
+              </small>
+              <LiveConnect signedIn={signedIn} error={liveError} />
             </div>
           </div>
           <section className="kpi-grid" aria-label="Key performance indicators">
-            {kpis.map((item) => <KpiCard item={item} key={item.label} />)}
+            {shownKpis.map((item) => <KpiCard item={item} key={item.label} />)}
           </section>
 
           <div className="dashboard-grid">
@@ -655,14 +675,14 @@ export function DashboardPage({ page = "Dashboard" }: { page?: string }) {
               </div>
               <DockStatus />
               <LinehaulRequests
-                data={requests}
+                data={shownRequests}
                 search={search}
                 showAll={showAll}
                 setShowAll={setShowAll}
               />
             </div>
             <aside className="dashboard-secondary" aria-label="Operations overview">
-              <ApprovalPipeline />
+              <ApprovalPipeline steps={shownPipeline} />
               <RecentActivity
                 expanded={activityExpanded}
                 toggleExpanded={() => setActivityExpanded(!activityExpanded)}

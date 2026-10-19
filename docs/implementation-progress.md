@@ -130,3 +130,12 @@ Done (locally verified):
 Not verified: no Redis was available here, so `startBullWorker` has never run against a live Redis (stalled-job and scheduler behaviour untested). The frontend still uses mock data and does not yet call the Nest API (set `SOC5_WEB_ORIGIN` for CORS when it does). Two install scripts (`unrs-resolver`, `msgpackr-extract`) were blocked by npm policy; `msgpackr-extract` is an optional native speed-up for BullMQ and does not affect correctness.
 
 Updated test totals: unit 97/97, Nest 3/3, DB 6 SQL files, Playwright dashboard 4/4, 0 prod vulnerabilities.
+
+## Dashboard wired to the API (pre-presentation)
+
+- Signed out: the approved dashboard renders exactly as before (existing 4 Playwright tests unchanged and green).
+- Signed in ("Connect live data" in the heading): email/password goes to `POST /api/v1/auth/login`, a server-side proxy for the Supabase password grant (anon key only, no refresh token returned, per-address throttled). The access token lives in `sessionStorage` and is sent as a Bearer token; every API call still re-checks the profile/role server-side.
+- Live data: request table (latest 100 visible to the role), approval-pipeline counts and KPI cards from `/requests`, `/requests/metrics`, `/dispatch/intraday`; refreshed every 30 s (polling; Supabase Realtime client not added). Cards without an approved definition (SLA Risk) show a dash rather than an invented number; legacy raw statuses show as "Legacy".
+- Set `NEXT_PUBLIC_SOC5_API_URL` to point the browser at the NestJS API instead of the same-origin Next routes.
+- Tests: `live-data.test.ts` (mapping), `login.test.ts`, and Playwright `dashboard-live.spec.ts` (sign-in swaps mock for API data, sign-out restores it; network mocked). Totals: unit 102/102, Nest 3/3, Playwright 10/10 for api+live specs plus dashboard 4/4, DB 6 SQL files.
+- Not verified: a real sign-in against the disposable Supabase project with a real approved profile (needs an account created and approved by an admin first); other pages (Queue, Approvals, Docking, Reports...) still use their mock module content, and there are no write actions (create/approve/dock) in the UI yet.

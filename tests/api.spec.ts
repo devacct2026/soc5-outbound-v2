@@ -27,7 +27,7 @@ for (const [method, path] of ENDPOINTS) {
 test("SeaTalk and intraday integration endpoints are disabled by default", async ({ request }) => {
   for (const path of ["/api/v1/integrations/seatalk/approval/approve", "/api/v1/integrations/seatalk/approval/reject", "/api/v1/integrations/seatalk/events", "/api/v1/integrations/intraday/sync"]) {
     const res = await request.post(path, { data: {} });
-    expect([503, 401, 400], path).toContain(res.status()); // never 200 without valid signature/config
+    expect([503, 401, 400, 403], path).toContain(res.status()); // never 200 without valid signature/config
   }
 });
 

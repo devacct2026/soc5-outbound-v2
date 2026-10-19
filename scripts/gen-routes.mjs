@@ -21,6 +21,7 @@ const routes = [
   ["kpi/hourly", { GET: "kpiHourlyHandler" }],
   ["kpi/export", { GET: "kpiExportHandler" }],
   ["auth/me", { GET: "meHandler" }],
+  ["auth/login", { POST: "loginHandler" }, [], "@/server/login"],
   ["operations/outbox/status", { GET: "outboxStatusHandler" }, [], "@/server/admin"],
   ["operations/outbox/[id]/[action]", { POST: "outboxActionHandler" }, ["id", "action"], "@/server/admin"],
   ["admin/accounts/[id]/approve", { POST: "approveAccountHandler" }, ["id"], "@/server/admin"],

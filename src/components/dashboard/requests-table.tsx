@@ -11,6 +11,8 @@ const statusClass: Record<RequestStatus, string> = {
   Docked: "status-docked",
   Completed: "status-completed",
   Rejected: "status-rejected",
+  Cancelled: "status-rejected",
+  Legacy: "status-pending",
 };
 
 export function RequestsTable({

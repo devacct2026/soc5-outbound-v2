@@ -4,6 +4,7 @@ import * as api from "./api.ts";
 import * as admin from "./admin.ts";
 import { approveCallback, challengeCallback, rejectCallback } from "./seatalk/routes.ts";
 import { intradaySyncHandler } from "./intraday-sync.ts";
+import { loginHandler } from "./login.ts";
 import type { Backend } from "./backend.ts";
 
 export type RouteHandler = (backend: Backend | null, request: Request, params?: Record<string, string>) => Promise<Response>;
@@ -35,6 +36,7 @@ export const ROUTES: Route[] = [
   { method: "GET", path: "kpi/hourly", handler: api.kpiHourlyHandler },
   { method: "GET", path: "kpi/export", handler: api.kpiExportHandler },
   { method: "GET", path: "auth/me", handler: api.meHandler },
+  { method: "POST", path: "auth/login", handler: loginHandler },
   { method: "GET", path: "operations/outbox/status", handler: admin.outboxStatusHandler },
   { method: "POST", path: "operations/outbox/:id/:action", handler: admin.outboxActionHandler },
   { method: "POST", path: "admin/accounts/:id/approve", handler: admin.approveAccountHandler },

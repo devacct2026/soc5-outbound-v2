@@ -128,7 +128,9 @@ export type RequestStatus =
   | "In Queue"
   | "Docked"
   | "Completed"
-  | "Rejected";
+  | "Rejected"
+  | "Cancelled"
+  | "Legacy";
 
 export type LinehaulRequest = {
   id: string;
