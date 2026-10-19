@@ -7,7 +7,7 @@ create schema if not exists private;
 
 create type user_role as enum ('ops_pic', 'fte_ops', 'fte_mm', 'doc_officer');
 create type truck_size as enum ('4W', '4WAUV', '4WCV', '6W', '10W', '6WF');
-create type truck_type as enum ('WETLEASE', 'DRYLEASE');
+create type truck_type as enum ('WETLEASE', 'DRYLEASE', 'ONCALL');
 -- Canonical statuses plus raw legacy values preserved by ST-1..ST-6.
 create type request_status as enum (
   'PENDING', 'REROUTED', 'REQUESTED', 'REJECTED', 'CANCELLED', 'DOCKING', 'DOCKED',

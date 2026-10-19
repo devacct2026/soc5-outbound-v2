@@ -71,12 +71,12 @@ select pg_temp.ok(orphan_approval_requests(now(), 100, 300) = '[]'::jsonb, 'no o
 select pg_temp.fails_with($$insert into seatalk_approval_assignments (request_id, assignee_id, status) values ('70000000-0000-0000-0000-000000000011','00000000-0000-0000-0000-0000000000b1','PENDING')$$, '23505', 'second open assignment rejected');
 
 -- ===== lead 6: sign-up trigger, backroom users, password flows
-insert into auth.users (id, email, raw_user_meta_data, raw_app_meta_data)
-  values ('30000000-0000-0000-0000-000000000001', 'New.Person@spxexpress.com', '{"full_name":"New Person","seatalk_employee_code":"EVIL"}', '{}');
+insert into auth.users (id, email, raw_user_meta_data, raw_app_meta_data, email_confirmed_at)
+  values ('30000000-0000-0000-0000-000000000001', 'New.Person@spxexpress.com', '{"full_name":"New Person","seatalk_employee_code":"EVIL"}', '{}', now());
 select pg_temp.ok((select account_status = 'PENDING_APPROVAL' and role is null and seatalk_employee_code is null and email = 'new.person@spxexpress.com'
                    from profiles where id='30000000-0000-0000-0000-000000000001'), 'auto-registered PENDING_APPROVAL; client metadata never grants a SeaTalk identity');
 select pg_temp.fails_with($$insert into auth.users (id, email) values ('30000000-0000-0000-0000-000000000002', 'x@gmail.com')$$, 'P0001', 'foreign domain blocked');
-insert into auth.users (id, email, raw_app_meta_data) values ('30000000-0000-0000-0000-000000000003', 'sea@spxexpress.com', '{"seatalk_employee_code":"e_77"}');
+insert into auth.users (id, email, raw_app_meta_data, email_confirmed_at) values ('30000000-0000-0000-0000-000000000003', 'sea@spxexpress.com', '{"seatalk_employee_code":"e_77"}', now());
 select pg_temp.ok((select seatalk_employee_code = 'e_77' from profiles where id='30000000-0000-0000-0000-000000000003'), 'server-written app metadata carries the SeaTalk identity');
 insert into auth.users (id, email, raw_app_meta_data) values ('30000000-0000-0000-0000-000000000004', 'ops777@backroom.soc5.internal', '{"account_type":"backroom"}');
 select pg_temp.ok(not exists (select 1 from profiles where id='30000000-0000-0000-0000-000000000004'), 'backroom auth users get no auto profile');
@@ -142,3 +142,45 @@ select pg_temp.ok(fte_disable_backroom_user('30000000-0000-0000-0000-00000000000
 select pg_temp.ok(fte_disable_backroom_user('00000000-0000-0000-0000-0000000000b2','00000000-0000-0000-0000-0000000000b1')->>'code' = 'NOT_FOUND', 'FTE accounts are not disable-able this way');
 select pg_temp.ok(fte_disable_backroom_user('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000b1')->>'code' = 'SELF_CHANGE', 'no self disable');
 select pg_temp.ok((select count(*) = 1 from audit_events where event_type = 'USER_DISABLED' and subject_id = '30000000-0000-0000-0000-000000000004'), 'disable audited');
+
+
+-- ===== review fixes
+-- unconfirmed sign-up (e.g. someone else's address via password sign-up) gets NO profile until the address is confirmed
+insert into auth.users (id, email) values ('30000000-0000-0000-0000-000000000010', 'victim@spxexpress.com');
+select pg_temp.ok(not exists (select 1 from profiles where id = '30000000-0000-0000-0000-000000000010'), 'unconfirmed email: no profile (pre-registration takeover closed)');
+select pg_temp.fails_with($$insert into auth.users (id, email) values ('30000000-0000-0000-0000-000000000011', 'x@gmail.com')$$, 'P0001', 'foreign domain refused even when unconfirmed');
+update auth.users set email_confirmed_at = now() where id = '30000000-0000-0000-0000-000000000010';
+select pg_temp.ok((select account_status = 'PENDING_APPROVAL' and role is null from profiles where id = '30000000-0000-0000-0000-000000000010'), 'confirming the address creates the PENDING_APPROVAL profile');
+
+-- managers (FTE Ops/MM) may only move Ops ID accounts between ops_pic and doc_officer; everything else needs an administrator
+select pg_temp.ok(admin_update_user('30000000-0000-0000-0000-000000000003','Sea','fte_ops','00000000-0000-0000-0000-0000000000c1')->>'code' = 'NOT_FOUND', 'pending accounts are not editable here');
+update profiles set account_status = 'ACTIVE', role = 'ops_pic' where id = '30000000-0000-0000-0000-000000000003';
+select pg_temp.ok(admin_update_user('30000000-0000-0000-0000-000000000003','Sea','fte_ops','00000000-0000-0000-0000-0000000000c1')->>'code' = 'FORBIDDEN', 'MM cannot touch a non-backroom (Google/SeaTalk) account');
+select pg_temp.ok(admin_update_user('00000000-0000-0000-0000-0000000000b2','Ops Two','ops_pic','00000000-0000-0000-0000-0000000000c1')->>'code' = 'FORBIDDEN', 'MM cannot demote an FTE Ops');
+select pg_temp.ok(admin_update_user('00000000-0000-0000-0000-0000000000e1','Admin','ops_pic','00000000-0000-0000-0000-0000000000c1')->>'code' = 'FORBIDDEN', 'MM cannot touch an administrator');
+select pg_temp.ok(admin_update_user('30000000-0000-0000-0000-000000000004','Ops Seven B','fte_ops','00000000-0000-0000-0000-0000000000c1')->>'code' = 'FORBIDDEN', 'a manager cannot grant an FTE role to a backroom account');
+select pg_temp.ok(admin_update_user('00000000-0000-0000-0000-0000000000d1','Doc','ops_pic','00000000-0000-0000-0000-0000000000a1')->>'code' = 'FORBIDDEN', 'non-managers cannot update users');
+select pg_temp.ok(admin_update_user('30000000-0000-0000-0000-000000000003','Sea','fte_mm','00000000-0000-0000-0000-0000000000e1')->>'ok' = 'true', 'an administrator can assign any role');
+select pg_temp.ok((select (metadata->>'priorRole') = 'ops_pic' and (metadata->>'byAdmin')::boolean from audit_events where event_type = 'USER_UPDATED' and subject_id = '30000000-0000-0000-0000-000000000003' order by id desc limit 1), 'audit records the prior role and who had the authority');
+
+-- notification paging with identical timestamps: nothing skipped or repeated across the boundary
+insert into notifications (dedupe_key, event_type, title, recipient_role, created_at)
+  select 'tie-' || g, 'X', 'tie ' || g, 'doc_officer', '2026-10-20T00:00:00Z' from generate_series(1, 5) g;
+create temp table feed1 as select * from notification_feed('00000000-0000-0000-0000-0000000000d1', 'doc_officer', 2);
+create temp table feed2 as select * from notification_feed('00000000-0000-0000-0000-0000000000d1', 'doc_officer', 2,
+  (select min(created_at) from feed1), (select id from feed1 order by created_at, id limit 1));
+create temp table feed3 as select * from notification_feed('00000000-0000-0000-0000-0000000000d1', 'doc_officer', 2,
+  (select min(created_at) from feed2), (select id from feed2 order by created_at, id limit 1));
+select pg_temp.ok((select count(*) from (select id from feed1 union all select id from feed2 union all select id from feed3) u)
+  = (select count(distinct id) from (select id from feed1 union all select id from feed2 union all select id from feed3) u), 'pages never repeat a row');
+select pg_temp.ok((select count(*) from notifications t where t.dedupe_key like 'tie-%'
+  and t.id in (select id from feed1 union select id from feed2 union select id from feed3)) = 5, 'every row sharing the timestamp is reachable across page boundaries');
+
+-- propagation never touches final/legacy rejections; a deactivated cluster stays deactivated; cursor row is seeded
+select import_clusters('[{"name":"C1","region":"R","dock_no":"1","backlogs":77},{"name":"C","region":"R","dock_no":"1","backlogs":88}]'::jsonb);
+select pg_temp.ok((select backlogs = 3 from requests where id = '11111111-1111-1111-1111-111111111101'), 'FINAL_NO_ROUTE request untouched by propagation');
+select pg_temp.ok((select backlogs = 9 from requests where id = '11111111-1111-1111-1111-111111111109'), 'LEGACY_UNRESOLVED request untouched by propagation (still the value set by the reconciliation session)');
+update clusters set active = false where name = 'C1';
+select import_clusters('[{"name":"C1","region":"R","dock_no":"1","backlogs":78}]'::jsonb);
+select pg_temp.ok((select not active and backlogs = 78 from clusters where name = 'C1'), 'import updates data but never re-activates an administrator-deactivated cluster');
+select pg_temp.ok(exists (select 1 from approval_routing_cursors where scope = 'fte_ops'), 'routing cursor row is seeded');

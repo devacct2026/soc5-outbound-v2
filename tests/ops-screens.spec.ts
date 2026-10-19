@@ -398,3 +398,26 @@ test("Realtime (WebSocket-first): joins with the user's token, refetches on chan
   await expect.poll(() => sockets, { timeout: 8000 }).toBe(2);
   await expect.poll(() => listCalls, { timeout: 8000 }).toBeGreaterThan(beforeDrop);
 });
+
+test("Presence: FTE Ops sends heartbeats (to route approvals to them); other roles never do", async ({ page }) => {
+  let beats = 0;
+  await page.route("**/api/v1/presence/heartbeat", (r) => { beats++; return r.fulfill({ json: { ok: true, last_seen_at: "2026-10-19T10:00:00Z", active_for_seconds: 60 } }); });
+  await signedIn(page, "fte_ops");
+  await expect.poll(() => beats).toBeGreaterThan(0);
+  const other = await page.context().newPage();
+  let otherBeats = 0;
+  await other.route("**/api/v1/**", (r) => r.fulfill({ status: 599, json: {} }));
+  await other.route("**/api/v1/presence/heartbeat", (r) => { otherBeats++; return r.fulfill({ json: { ok: true } }); });
+  await other.route("**/api/v1/auth/status", (r) => r.fulfill({ json: { account_status: "ACTIVE", role: "fte_mm", must_change_password: false } }));
+  await other.route("**/api/v1/auth/me", (r) => r.fulfill({ json: { id: "m", role: "fte_mm", is_admin: false, reporting_permission: false, must_change_password: false } }));
+  await other.route("**/api/v1/requests?*", (r) => r.fulfill({ json: { data: [], has_more: false, next_cursor: null, limit: 25 } }));
+  await other.route("**/api/v1/requests/metrics", (r) => r.fulfill({ json: { total: 0, awaiting_action: 0, by_status: {} } }));
+  await other.route("**/api/v1/dispatch/intraday?*", (r) => r.fulfill({ json: { data: [] } }));
+  await other.route("**/api/v1/notifications*", (r) => r.fulfill({ json: { data: [], unread: 0, has_more: false } }));
+  await other.goto("/");
+  await other.evaluate(() => window.sessionStorage.setItem("soc5-access-token", JSON.stringify({ token: "x".repeat(40), exp: Date.now() + 3_600_000 })));
+  await other.goto("/");
+  await expect(other.getByText("Connected to live API")).toBeVisible();
+  await other.waitForTimeout(1500);
+  expect(otherBeats).toBe(0);
+});

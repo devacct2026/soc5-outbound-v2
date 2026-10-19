@@ -24,7 +24,8 @@ export async function main() {
   const app = await createApp(backend);
   // Browsers call the Nest API from the Next.js origin only.
   const origin = process.env.SOC5_WEB_ORIGIN;
-  if (origin) app.enableCors({ origin, credentials: false, methods: ["GET", "POST", "PUT", "PATCH"], allowedHeaders: ["authorization", "content-type", "idempotency-key", "x-admin-override", "x-override-role"] });
+  // credentials: the SeaTalk login state cookie is set by a credentialed cross-origin fetch (single explicit origin, never "*").
+  if (origin) app.enableCors({ origin, credentials: true, methods: ["GET", "POST", "PUT", "PATCH"], allowedHeaders: ["authorization", "content-type", "idempotency-key", "x-admin-override", "x-override-role"] });
   const port = Number(process.env.SOC5_API_PORT ?? 4000);
   await app.listen(port, "0.0.0.0");
   console.log(`SOC5 API listening on :${port} (backend ${backend ? "configured" : "NOT configured: protected routes answer 503"})`);
