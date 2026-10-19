@@ -1,4 +1,6 @@
 -- Seed fixed identities used by later test files (disposable DB only).
+-- Seed identities bypass the sign-up gate (fixed test fixtures, not real sign-ups).
+alter table auth.users disable trigger on_auth_user_created;
 insert into auth.users (id, email)
 select ('00000000-0000-0000-0000-0000000000' || id)::uuid, email from (values
  ('a1','pic1@test'),('a2','pic2@test'),('b1','ops1@test'),('b2','ops2@test'),('c1','mm@test'),
@@ -15,3 +17,4 @@ select ('00000000-0000-0000-0000-0000000000' || id)::uuid, role::user_role, emai
  ('f1',null,'pending@test','PENDING_APPROVAL',false,false),
  ('91','ops_pic','disabled@test','DISABLED',false,false),
  ('71','doc_officer','report@test','ACTIVE',false,true)) v(id,role,email,st,adm,rep);
+alter table auth.users enable trigger on_auth_user_created;

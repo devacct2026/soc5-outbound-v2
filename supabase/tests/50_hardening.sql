@@ -42,7 +42,9 @@ select pg_temp.fails_with($$update requests set status='REQUESTED' where id='666
 
 -- Admin guards: no self-lockout, never the last admin
 select pg_temp.ok((admin_disable_account(:'admin', :'admin', 'bye')->>'code') = 'INVALID_STATE', 'cannot disable yourself');
+alter table auth.users disable trigger on_auth_user_created;
 insert into auth.users (id, email) values ('00000000-0000-0000-0000-0000000000e2', 'admin2@test');
+alter table auth.users enable trigger on_auth_user_created;
 insert into profiles (id, role, email, account_status, is_admin) values ('00000000-0000-0000-0000-0000000000e2', 'fte_ops', 'admin2@test', 'ACTIVE', true);
 select pg_temp.ok((admin_disable_account('00000000-0000-0000-0000-0000000000e2', :'admin', 'rotate admins')->>'ok')::boolean, 'a second admin can be disabled while another remains');
 select pg_temp.ok((admin_disable_account(:'admin', '00000000-0000-0000-0000-0000000000e2', 'x')->>'code') = 'FORBIDDEN', 'disabled admin has no authority');
