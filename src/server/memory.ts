@@ -207,6 +207,14 @@ export class MemoryStore implements Store {
   async schedules() {
     return this.scheduleList;
   }
+  async upsertIntraday(rows: { date: string; hour: number; orderQty: number }[]) {
+    for (const r of rows) {
+      const list = this.dispatch.get(r.date) ?? [];
+      const next = list.filter((x) => x.hour !== r.hour);
+      next.push({ hour: r.hour, orderQty: r.orderQty, syncedAt: this.now().toISOString() });
+      this.dispatch.set(r.date, next);
+    }
+  }
   async reportingRows(from: string, to: string) {
     const tz = DEFAULT_SCHEDULE.timezone;
     return [...this.requests.values()].filter((r) => {

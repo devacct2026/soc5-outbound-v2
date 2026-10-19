@@ -64,3 +64,10 @@ select pg_temp.ok((kpi_hourly('2026-10-20')->'bins'->0->>'count')::int = 1, 'shi
 insert into reporting_schedules (effective_from, shift_start, interval_count, timezone) values ('2026-11-01','06:00',12,'Asia/Manila');
 select pg_temp.ok(jsonb_array_length(kpi_hourly('2026-10-20')->'bins') = 13, 'historical report keeps original schedule');
 select pg_temp.ok(jsonb_array_length(kpi_hourly('2026-11-02')->'bins') = 12, 'new schedule applies going forward');
+
+-- Channel filter: rows of channels without a handler are never claimed (attempts not burned)
+insert into workflow_outbox (idempotency_key, channel, event_type, status, available_at) values
+ ('c-sheets','GOOGLE_SHEETS','E','PENDING', now() - interval '1 minute');
+select pg_temp.ok((select count(*) from claim_outbox(10, 300, array['SEATALK_ALERT']) where idempotency_key='c-sheets')=0, 'channel filter excludes sheets');
+select pg_temp.ok((select attempts from workflow_outbox where idempotency_key='c-sheets')=0, 'attempts untouched');
+select pg_temp.ok((select count(*) from claim_outbox(10, 300, array['GOOGLE_SHEETS']) where idempotency_key='c-sheets')=1, 'sheets claimed when handled');

@@ -113,6 +113,7 @@ export interface Store {
   searchClusters(query: string): Promise<ClusterView[]>;
   intraday(date: string): Promise<{ hour: number; orderQty: number; syncedAt: string | null }[]>;
   schedules(): Promise<Schedule[]>;
+  upsertIntraday(rows: { date: string; hour: number; orderQty: number }[]): Promise<void>;
   /** Raw rows for reporting; the service applies KPI definitions + authorization. */
   reportingRows(from: string, to: string): Promise<RequestRecord[]>;
 }

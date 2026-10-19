@@ -198,14 +198,15 @@ end
 $fn$;
 
 -- ---------------------------------------------------------- worker functions
-create or replace function claim_outbox(p_limit integer, p_lock_timeout_seconds integer default 300)
+create or replace function claim_outbox(p_limit integer, p_lock_timeout_seconds integer default 300, p_channels text[] default null)
 returns setof workflow_outbox
 language sql security invoker set search_path = public as $$
   update workflow_outbox o set status = 'PROCESSING', attempts = o.attempts + 1, locked_at = now()
   where o.id in (
     select id from workflow_outbox
-    where (status = 'PENDING' and available_at <= now())
-       or (status = 'PROCESSING' and locked_at < now() - make_interval(secs => p_lock_timeout_seconds))
+    where ((status = 'PENDING' and available_at <= now())
+       or (status = 'PROCESSING' and locked_at < now() - make_interval(secs => p_lock_timeout_seconds)))
+      and (p_channels is null or channel = any (p_channels))   -- never touch channels without a handler
     order by available_at
     limit greatest(p_limit, 1)
     for update skip locked)

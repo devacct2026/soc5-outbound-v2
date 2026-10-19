@@ -2,12 +2,12 @@
 // Uses the SERVICE ROLE key: server-only, never imported from client code and
 // never logged. Authorization is enforced by the services before any call.
 export class RestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string | null,
-    message: string,
-  ) {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(status: number, code: string | null, message: string) {
     super(message);
+    this.status = status;
+    this.code = code;
   }
 }
 
@@ -19,7 +19,10 @@ export interface RestConfig {
 }
 
 export class Rest {
-  constructor(private cfg: RestConfig) {}
+  private cfg: RestConfig;
+  constructor(cfg: RestConfig) {
+    this.cfg = cfg;
+  }
 
   private async call(method: string, path: string, opts: { body?: unknown; headers?: Record<string, string> } = {}) {
     const f = this.cfg.fetchImpl ?? fetch;

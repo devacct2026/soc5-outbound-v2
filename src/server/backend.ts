@@ -4,6 +4,8 @@ import type { Actor } from "../domain/requests/workflow.ts";
 import type { RequestRecord } from "../domain/requests/lifecycle.ts";
 import { DEFAULT_FEATURES, type Features } from "./commands.ts";
 import type { Store } from "./store.ts";
+import type { AdminPort } from "./admin.ts";
+import type { SeatalkWiring } from "./seatalk/callback.ts";
 
 /**
  * SEA-1: approval must go through the SeaTalk Approval Center. There is no
@@ -33,6 +35,11 @@ export interface Backend {
   approvalGate: ApprovalGate;
   identity: IdentityVerifier;
   now: () => Date;
+  admin?: AdminPort;
+  /** Shared secret for the Google Apps Script intraday sync (server-only). */
+  intradaySecret?: string;
+  /** Present only when a signature secret is configured; still gated by features.seatalkApproval. */
+  seatalk?: SeatalkWiring;
 }
 
 export function makeBackend(
@@ -59,6 +66,11 @@ export async function getBackend(): Promise<Backend | null> {
     return cached;
   }
   const { createSupabaseBackend } = await import("./supabase/backend.ts");
-  cached = createSupabaseBackend({ url, anonKey: anon, serviceKey: service });
+  const flag = (n: string) => process.env[n] === "true";
+  cached = createSupabaseBackend({ url, anonKey: anon, serviceKey: service }, {
+    features: { seatalkApproval: flag("FEATURE_SEATALK_APPROVAL"), seatalkAlerts: flag("FEATURE_SEATALK_ALERTS"), googleSheets: flag("FEATURE_GOOGLE_SHEETS") },
+    seatalkSecret: process.env.SEATALK_CALLBACK_SECRET,
+    seatalkMaxSkewSeconds: Number(process.env.SEATALK_CALLBACK_MAX_SKEW_SECONDS ?? 300),
+  });
   return cached;
 }

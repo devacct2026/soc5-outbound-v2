@@ -20,6 +20,8 @@ import {
 } from "../store.ts";
 import { fromRow, toRow } from "./mapping.ts";
 import { Rest, RestError, q } from "./rest.ts";
+import { SupabaseAdmin } from "../admin-ports.ts";
+import { SupabaseApprovalStore } from "../seatalk/supabase.ts";
 
 const ACTIVE_AWAITING = new Set(["PENDING", "REROUTED", "REQUESTED", "DOCKING"]);
 
@@ -41,7 +43,12 @@ function pageOf(rows: RequestRecord[], limit: number): Page<RequestRecord> {
 }
 
 export class SupabaseStore implements Store {
-  constructor(private rest: Rest, private now: () => Date = () => new Date()) {}
+  private rest: Rest;
+  private now: () => Date;
+  constructor(rest: Rest, now: () => Date = () => new Date()) {
+    this.rest = rest;
+    this.now = now;
+  }
 
   async transaction<T>(requestId: string, fn: (tx: CommandTx) => Promise<T>): Promise<T> {
     return withVersionRetry(async () => {
@@ -264,6 +271,14 @@ export class SupabaseStore implements Store {
       : [DEFAULT_SCHEDULE];
   }
 
+  async upsertIntraday(rows: { date: string; hour: number; orderQty: number }[]) {
+    await this.rest.insert(
+      "intraday_dispatch?on_conflict=dispatch_date,hour",
+      rows.map((r) => ({ dispatch_date: r.date, hour: r.hour, order_qty: r.orderQty, synced_at: this.now().toISOString() })),
+      "resolution=merge-duplicates,return=minimal",
+    );
+  }
+
   async reportingRows(from: string, to: string) {
     const lo = new Date(Date.parse(`${from}T00:00:00Z`) - 86_400_000).toISOString();
     const hi = new Date(Date.parse(`${to}T00:00:00Z`) + 2 * 86_400_000).toISOString();
@@ -342,7 +357,21 @@ export function makeAuthenticator(cfg: SupabaseConfig, rest: Rest) {
   };
 }
 
-export function createSupabaseBackend(cfg: SupabaseConfig): Backend {
+export interface SupabaseBackendOptions {
+  features?: Backend["features"];
+  seatalkSecret?: string;
+  seatalkMaxSkewSeconds?: number;
+}
+
+export function createSupabaseBackend(cfg: SupabaseConfig, opts: SupabaseBackendOptions = {}): Backend {
   const rest = new Rest({ url: cfg.url, serviceKey: cfg.serviceKey, fetchImpl: cfg.fetchImpl });
-  return makeBackend({ store: new SupabaseStore(rest), authenticate: makeAuthenticator(cfg, rest) });
+  return makeBackend({
+    store: new SupabaseStore(rest),
+    authenticate: makeAuthenticator(cfg, rest),
+    admin: new SupabaseAdmin(rest),
+    ...(opts.features ? { features: opts.features } : {}),
+    ...(opts.seatalkSecret
+      ? { seatalk: { signature: { secret: opts.seatalkSecret, maxSkewSeconds: opts.seatalkMaxSkewSeconds ?? 300 }, approvals: new SupabaseApprovalStore(rest) } }
+      : {}),
+  });
 }

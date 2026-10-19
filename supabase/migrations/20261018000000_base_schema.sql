@@ -208,7 +208,8 @@ create table seatalk_approval_assignments (
   request_id uuid not null references requests (id),
   assignee_id uuid not null references profiles (id),
   status text not null default 'PENDING' check (status in ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED', 'CLOSED')),
-  token_hash text,
+  provider_item_id text unique,          -- SeaTalk Approval Center item id
+  token_hash text,                       -- SHA-256 of the one-time approval token
   sent_at timestamptz,
   expires_at timestamptz,
   responded_at timestamptz,

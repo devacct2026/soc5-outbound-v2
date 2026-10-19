@@ -3,7 +3,7 @@
 // existing database. Requires PostgreSQL binaries (initdb/pg_ctl/psql) on PATH
 // or PG_BIN. Exit 0 = all pass, 1 = failure, 2 = prerequisites unavailable.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
