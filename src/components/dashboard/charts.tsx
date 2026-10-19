@@ -21,11 +21,11 @@ const axisStyle = {
   fontSize: 10,
 };
 
-function getFlowData(metric: ChartMetric, period: ReportingPeriod) {
+function getFlowData(metric: ChartMetric, period: ReportingPeriod, liveFlow?: { hour: string; requests: number }[], liveVolume?: { hour: string; trucks: number }[]) {
   const data =
     metric === "requests"
-      ? requestFlow.map(({ hour, requests }) => ({ hour, value: requests }))
-      : hourlyVolume.map(({ hour, trucks }) => ({ hour: `${hour}:00`, value: trucks }));
+      ? (liveFlow ?? requestFlow).map(({ hour, requests }) => ({ hour, value: requests }))
+      : (liveVolume ?? hourlyVolume).map(({ hour, trucks }) => ({ hour: `${hour}:00`, value: trucks }));
   const visibleCount = period === "today" ? data.length : period === "week" ? 12 : 6;
   return data.slice(0, visibleCount);
 }
@@ -33,11 +33,15 @@ function getFlowData(metric: ChartMetric, period: ReportingPeriod) {
 export function RequestFlowChart({
   metric,
   period,
+  liveFlow,
+  liveVolume,
 }: {
   metric: ChartMetric;
   period: ReportingPeriod;
+  liveFlow?: { hour: string; requests: number }[];
+  liveVolume?: { hour: string; trucks: number }[];
 }) {
-  const data = getFlowData(metric, period);
+  const data = getFlowData(metric, period, liveFlow, liveVolume);
   const maxValue = Math.ceil(Math.max(...data.map((point) => point.value)) / 10) * 10;
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -95,11 +99,12 @@ export function RequestFlowChart({
   );
 }
 
-export function HourlyVolumeChart({ period }: { period: ReportingPeriod }) {
-  const visibleCount = period === "today" ? hourlyVolume.length : period === "week" ? 12 : 6;
+export function HourlyVolumeChart({ period, liveVolume }: { period: ReportingPeriod; liveVolume?: { hour: string; trucks: number }[] }) {
+  const source = liveVolume ?? hourlyVolume;
+  const visibleCount = period === "today" ? source.length : period === "week" ? 12 : 6;
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={hourlyVolume.slice(0, visibleCount)} margin={{ top: 6, right: 4, left: -18, bottom: 0 }}>
+      <BarChart data={source.slice(0, visibleCount)} margin={{ top: 6, right: 4, left: -18, bottom: 0 }}>
         <CartesianGrid stroke="var(--chart-grid)" vertical />
         <XAxis
           dataKey="hour"

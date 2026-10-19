@@ -137,6 +137,18 @@ export function verifyCallbackSignature(cfg: SignatureConfig, headers: Headers, 
     : { ok: false, reason: "BAD_SIGNATURE" };
 }
 
+/** Source-compatible sync verifier; legacy V2 x-timestamp/x-signature callers remain supported. */
+export function verifySyncSignature(secret: string, headers: Headers, rawBody: string, now: Date, maxSkewSeconds = 300): SignatureResult {
+  const sig = (headers.get("x-sync-signature") ?? headers.get("x-signature"))?.trim().toLowerCase() ?? "";
+  const ts = (headers.get("x-sync-timestamp") ?? headers.get("x-timestamp"))?.trim() ?? "";
+  const seconds = Number(ts);
+  if (!/^\d{10}$/.test(ts) || !Number.isSafeInteger(seconds) || !/^[0-9a-f]{64}$/.test(sig)) return { ok: false, reason: "MISSING" };
+  if (!Number.isFinite(maxSkewSeconds) || maxSkewSeconds <= 0 || Math.abs(Math.floor(now.getTime() / 1000) - seconds) > maxSkewSeconds) return { ok: false, reason: "STALE" };
+  return safeEqual(Buffer.from(sig, "hex"), Buffer.from(signSync(secret, ts, rawBody), "hex"))
+    ? { ok: true }
+    : { ok: false, reason: "BAD_SIGNATURE" };
+}
+
 // ------------------------------------------------------------------ callbacks
 export interface AssignmentInfo {
   id: string;
