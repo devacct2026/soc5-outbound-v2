@@ -67,3 +67,53 @@ was contacted.
 ## Verification run log
 
 See "Final report" at the bottom (updated at the end of the session).
+
+## Final report (session end)
+
+### Verification results (all local/disposable; nothing live)
+
+| Check | Result |
+|---|---|
+| ESLint | PASS (0 problems) |
+| TypeScript (`tsc --noEmit`) | PASS |
+| Unit/integration (`npm run test:unit`) | PASS 96/96 |
+| DB migration replay + RLS/constraint/audit/worker/privilege tests (`npm run test:db`) | PASS (3 migrations, 6 SQL files) |
+| Production build | PASS (25 API routes, all dynamic) |
+| Playwright dashboard spec (UI preserved) | PASS 4/4 |
+| Playwright API fail-closed spec | PASS 9/9 when unconfigured; **not re-run** after `.env.local` gained SOC5_* values (to avoid contacting that project); assertions now accept 401 |
+| `npm audit --omit=dev` | PASS (0 vulnerabilities, run before final fixes) |
+| `.travis.yml` | Written, **not executed** |
+| Live Supabase / SeaTalk sandbox / Google | **Not tested** (no approved credentials) |
+
+### Commits
+`feat(db)`, `feat(domain)`, `feat(api)`, `feat: outbox worker...`, `feat: Sheets sync...`, review-fix commit, e2e tolerance commit (see `git log`). Nothing pushed.
+
+### Independent review
+One read-only review found 13 issues (no critical). Fixed with regression tests: SeaTalk callback retry-poisoning, notification dedupe suppression, expired idempotency keys, existence oracle, unvalidated filters (500s), silent report truncation, body-size DoS, skew misconfiguration, override-role hashing, outbox lock ownership, SQL state-pair/terminal-row guards, self-lockout, profile column exposure. Accepted/open: intraday HMAC replay within 300 s (needs HTTPS network position); in-process rate limiter is per instance (edge/WAF limit required).
+
+### Blockers (not fabricated, documented)
+1. SeaTalk official endpoints/signature/payloads unverified, so approval, alerts and callbacks are disabled and approvals stay pending. The signature scheme in code is an ASSUMED placeholder.
+2. Google Sheets: original 19-column layout unavailable; v2 column set must be confirmed; live Google untested.
+3. Production values (retry limits, retention, presence/expiry, schedule) need owner approval.
+4. Strong-identity verifier for admin overrides unconfigured, so overrides are off.
+5. SeaTalk OAuth registration flow is blocked on item 1; policy function exists.
+6. Dashboard still uses mock data; realtime hook and API wiring not done (needs supabase-js or polling; `npm install` was denied).
+7. `.env.local` contains legacy and now SOC5_* variables: confirm they target a disposable project.
+
+### MVP readiness
+Weighted by phase (P0 = 2x, P1 = 1.5x, P2 = 1x), counting a phase as full credit only when locally verified:
+P0 (phases 1-4: DB, auth, requests, workflow) 4 x 2 = 8 of 8, but auth is verified only against stubs so scored 7.5.
+P1 (5, 7, 8-backend) 3 x 1.5 = 4.5; dashboard wiring missing, scored 3.75.
+P2 (6, 9, 10, 11, 12) 5 x 1: SeaTalk 0.4, Sheets 0.6, reconciliation 1, hardening 1, CI/deploy prep 0.8 = 3.8.
+Total = 15.05 / 17.5 = **about 86% backend MVP (code and local tests)**; about 60% end-to-end because UI wiring and live integrations are unverified.
+
+### Verdict: **NO-GO for production**
+Reasons: no live Supabase run, SeaTalk unverified, UI not wired, production configuration unapproved (`10-implementation-readiness.md` gates open). GO for continued development and a disposable-environment rehearsal.
+
+### Work needed after 7:00 PM
+1. Run migrations and `commit_transition`/RPCs against a disposable Supabase project; measure real revocation delay.
+2. Verify SeaTalk contract in sandbox, replace the placeholder signature, enable gate and alerts.
+3. Wire dashboard/queue/KPI to `/api/v1` plus realtime or polling.
+4. Confirm Sheets columns, test with a disposable sheet.
+5. Run historical reconciliation preview on an exported non-production copy.
+6. Get approval of production values; add edge rate limiting and alert owners/runbooks; run Travis.
