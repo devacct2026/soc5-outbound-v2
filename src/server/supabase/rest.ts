@@ -63,6 +63,7 @@ export class Rest {
 
 /** PostgREST filter value quoting for uuid/text equality (rejects injection characters). */
 export function q(v: string): string {
-  if (!/^[A-Za-z0-9_.:@+\- ]*$/.test(v)) throw new Error("unsafe filter value");
+  // "/" is legitimate (request paths); ",", "(", ")" and operators are not. The value is also URL-encoded.
+  if (!/^[A-Za-z0-9_.:@+/\- ]*$/.test(v)) throw new Error("unsafe filter value");
   return encodeURIComponent(v);
 }

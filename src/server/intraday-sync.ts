@@ -40,7 +40,7 @@ export function aggregateRows(rows: unknown[]): { rows: IntradayRow[]; rejected:
 
 export async function intradaySyncHandler(backend: Backend | null, request: Request): Promise<Response> {
   if (!backend) return json(503, { error: "BACKEND_NOT_CONFIGURED" });
-  const secret = process.env.INTRADAY_SYNC_SECRET ?? backend.intradaySecret;
+  const secret = process.env.SOC5_INTRADAY_SYNC_SECRET ?? backend.intradaySecret;
   if (!secret) return json(503, { error: "INTRADAY_SYNC_DISABLED" });
   if (request.headers.get("x-source") !== "google-apps-script") return json(403, { error: "FORBIDDEN" });
   const len = Number(request.headers.get("content-length") ?? 0);

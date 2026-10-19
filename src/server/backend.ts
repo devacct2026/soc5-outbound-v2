@@ -58,9 +58,9 @@ let cached: Backend | null | undefined;
 
 export async function getBackend(): Promise<Backend | null> {
   if (cached !== undefined) return cached;
-  const url = process.env.SUPABASE_URL;
-  const anon = process.env.SUPABASE_ANON_KEY;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY; // server-only; never NEXT_PUBLIC_
+  const url = process.env.SOC5_SUPABASE_URL;
+  const anon = process.env.SOC5_SUPABASE_ANON_KEY;
+  const service = process.env.SOC5_SUPABASE_SERVICE_ROLE_KEY; // server-only; never NEXT_PUBLIC_
   if (!url || !anon || !service) {
     cached = null;
     return cached;
@@ -68,9 +68,9 @@ export async function getBackend(): Promise<Backend | null> {
   const { createSupabaseBackend } = await import("./supabase/backend.ts");
   const flag = (n: string) => process.env[n] === "true";
   cached = createSupabaseBackend({ url, anonKey: anon, serviceKey: service }, {
-    features: { seatalkApproval: flag("FEATURE_SEATALK_APPROVAL"), seatalkAlerts: flag("FEATURE_SEATALK_ALERTS"), googleSheets: flag("FEATURE_GOOGLE_SHEETS") },
-    seatalkSecret: process.env.SEATALK_CALLBACK_SECRET,
-    seatalkMaxSkewSeconds: Number(process.env.SEATALK_CALLBACK_MAX_SKEW_SECONDS ?? 300),
+    features: { seatalkApproval: flag("SOC5_FEATURE_SEATALK_APPROVAL"), seatalkAlerts: flag("SOC5_FEATURE_SEATALK_ALERTS"), googleSheets: flag("SOC5_FEATURE_GOOGLE_SHEETS") },
+    seatalkSecret: process.env.SOC5_SEATALK_CALLBACK_SECRET,
+    seatalkMaxSkewSeconds: Number(process.env.SOC5_SEATALK_CALLBACK_MAX_SKEW_SECONDS ?? 300),
   });
   return cached;
 }
