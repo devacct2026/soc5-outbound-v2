@@ -425,7 +425,18 @@ export const metricsHandler: Handler = async (backend, request) => {
 export const notificationsHandler: Handler = async (backend, request) => {
   const a = await authed(backend, request);
   if (a instanceof Response) return a;
-  return json(200, await a.backend.store.notifications(a.actor));
+  const u = new URL(request.url);
+  const limitRaw = u.searchParams.get("limit");
+  const limit = limitRaw === null ? 50 : Number(limitRaw);
+  const before = u.searchParams.get("before");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) return invalid({ limit: "1-100" });
+  if (before !== null && Number.isNaN(Date.parse(before))) return invalid({ before: "ISO timestamp required" });
+  const n = await a.backend.store.notifications(a.actor, { limit, before });
+  return json(200, {
+    data: n.data.map((x) => ({ id: x.id, event_type: x.event, title: x.title, body: x.body, request_id: x.requestId, created_at: x.createdAt, read: x.read })),
+    unread: n.unread,
+    has_more: n.data.length === limit,
+  });
 };
 
 export const markReadHandler: Handler = async (backend, request, params) => {
@@ -442,7 +453,12 @@ export const clustersHandler: Handler = async (backend, request) => {
   if (a instanceof Response) return a;
   const q = new URL(request.url).searchParams.get("search") ?? "";
   if (q.length < 3 || q.length > 80 || !/^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(q)) return invalid({ search: "3-80 letters, digits, space . _ -" });
-  return json(200, { data: await a.backend.store.searchClusters(q) });
+  const rows = await a.backend.store.searchClusters(q);
+  return json(200, {
+    data: rows.map((c) => ({
+      id: c.id, cluster_name: c.name, hub_name: c.hub, region: c.region, dock_number: c.dockNo, backlogs: c.backlogs, backlogs_ts: c.backlogsTimestamp,
+    })),
+  });
 };
 
 export const intradayHandler: Handler = async (backend, request) => {

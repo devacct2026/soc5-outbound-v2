@@ -86,9 +86,18 @@ export interface NotificationView {
   id: string;
   event: string;
   title: string;
+  body: string;
   requestId: string | null;
   createdAt: string;
   read: boolean;
+}
+
+export interface ClusterImportRow {
+  name: string;
+  region: string;
+  dockNo: string | null;
+  backlogs: number;
+  backlogsTimestamp: string | null; // full UTC instant
 }
 
 export interface ClusterView {
@@ -96,8 +105,9 @@ export interface ClusterView {
   name: string;
   hub: string | null;
   region: string;
-  dockNo: string;
+  dockNo: string | null;
   backlogs: number;
+  backlogsTimestamp: string | null;
 }
 
 export interface Store {
@@ -107,10 +117,13 @@ export interface Store {
   listRequests(actor: Actor, q: ListQuery): Promise<Page<RequestRecord>>;
   queue(actor: Actor, q: { limit: number; cursor: Cursor | null }): Promise<Page<RequestRecord>>;
   metrics(actor: Actor, f: { search?: string; dateFrom?: string; dateTo?: string }): Promise<Metrics>;
-  notifications(actor: Actor): Promise<{ data: NotificationView[]; unread: number }>;
+  /** `unread` counts EVERY visible notification, not just the returned page. `before` pages backwards (createdAt). */
+  notifications(actor: Actor, opts?: { limit?: number; before?: string | null }): Promise<{ data: NotificationView[]; unread: number }>;
   markNotificationsRead(actor: Actor, id: string | null): Promise<boolean>;
   clusterActive(id: string): Promise<boolean>;
   searchClusters(query: string): Promise<ClusterView[]>;
+  /** Atomic upsert by cluster name; backlog changes propagate to matching requests (audited). */
+  importClusters(rows: ClusterImportRow[], source: string): Promise<{ processed: number }>;
   intraday(date: string): Promise<{ hour: number; orderQty: number; syncedAt: string | null }[]>;
   schedules(): Promise<Schedule[]>;
   upsertIntraday(rows: { date: string; hour: number; orderQty: number }[]): Promise<void>;

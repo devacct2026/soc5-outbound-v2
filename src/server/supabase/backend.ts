@@ -11,6 +11,7 @@ import {
   ReportTooLargeError,
   VersionConflictError,
   withVersionRetry,
+  type ClusterImportRow,
   type ClusterView,
   type CommandTx,
   type CommitInput,
@@ -207,39 +208,26 @@ export class SupabaseStore implements Store {
     return { total: all.length, awaiting_action: awaiting, by_status };
   }
 
-  async notifications(actor: Actor) {
-    const rows = await this.rest.select(
-      "notifications",
-      `or=(recipient_user_id.eq.${q(actor.id)},recipient_role.eq.${q(actor.role)})&order=created_at.desc&limit=50`,
-    );
-    const ids = rows.map((r) => String(r.id));
-    const reads = ids.length
-      ? await this.rest.select("notification_reads", `user_id=eq.${q(actor.id)}&notification_id=in.(${ids.map(q).join(",")})`)
-      : [];
-    const readSet = new Set(reads.map((r) => String(r.notification_id)));
+  async notifications(actor: Actor, opts: { limit?: number; before?: string | null } = {}) {
+    const [rows, unread] = await Promise.all([
+      this.rest.rpc("notification_feed", { p_user: actor.id, p_role: actor.role, p_limit: opts.limit ?? 50, p_before: opts.before ?? null }) as Promise<Record<string, unknown>[]>,
+      this.rest.rpc("notification_unread_count", { p_user: actor.id, p_role: actor.role }) as Promise<number>,
+    ]);
     const data = rows.map((n) => ({
       id: String(n.id),
       event: String(n.event_type),
       title: String(n.title),
+      body: String(n.body ?? ""),
       requestId: (n.request_id as string | null) ?? null,
       createdAt: String(n.created_at),
-      read: readSet.has(String(n.id)),
+      read: n.read === true,
     }));
-    return { data, unread: data.filter((n) => !n.read).length };
+    return { data, unread: Number(unread) };
   }
 
   async markNotificationsRead(actor: Actor, id: string | null) {
-    const { data } = await this.notifications(actor);
-    const targets = id ? data.filter((n) => n.id === id) : data.filter((n) => !n.read);
-    if (id && !targets.length) return false;
-    if (targets.length) {
-      await this.rest.insert(
-        "notification_reads",
-        targets.map((n) => ({ notification_id: n.id, user_id: actor.id })),
-        "resolution=ignore-duplicates,return=minimal",
-      );
-    }
-    return true;
+    const n = Number(await this.rest.rpc("notification_mark_read", { p_user: actor.id, p_role: actor.role, p_id: id }));
+    return n >= 0; // -1: not visible to this user
   }
 
   async clusterActive(id: string) {
@@ -247,11 +235,23 @@ export class SupabaseStore implements Store {
   }
 
   async searchClusters(query: string): Promise<ClusterView[]> {
-    const rows = await this.rest.select("clusters", `name=ilike.*${q(query)}*&active=eq.true&limit=12`);
+    const rows = await this.rest.select(
+      "clusters",
+      `or=(name.ilike.*${q(query)}*,hub_name.ilike.*${q(query)}*)&active=eq.true&order=name.asc&limit=12`,
+    );
     return rows.map((c) => ({
       id: String(c.id), name: String(c.name), hub: (c.hub_name as string | null) ?? null,
-      region: String(c.region), dockNo: String(c.dock_no), backlogs: Number(c.backlogs),
+      region: String(c.region), dockNo: (c.dock_no as string | null) ?? null, backlogs: Number(c.backlogs),
+      backlogsTimestamp: (c.backlogs_timestamp as string | null) ?? null,
     }));
+  }
+
+  async importClusters(rows: ClusterImportRow[], source: string) {
+    const r = (await this.rest.rpc("import_clusters", {
+      p_rows: rows.map((x) => ({ name: x.name, region: x.region, dock_no: x.dockNo, backlogs: x.backlogs, backlogs_timestamp: x.backlogsTimestamp })),
+      p_source: source,
+    })) as { processed: number };
+    return { processed: Number(r.processed) };
   }
 
   async intraday(date: string) {

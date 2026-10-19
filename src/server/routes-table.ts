@@ -4,6 +4,7 @@ import * as api from "./api.ts";
 import * as admin from "./admin.ts";
 import { approveCallback, challengeCallback, rejectCallback } from "./seatalk/routes.ts";
 import { intradaySyncHandler } from "./intraday-sync.ts";
+import { clusterSyncHandler } from "./cluster-sync.ts";
 import { loginHandler } from "./login.ts";
 import type { Backend } from "./backend.ts";
 
@@ -46,6 +47,7 @@ export const ROUTES: Route[] = [
   { method: "POST", path: "integrations/seatalk/approval/reject", handler: rejectCallback },
   { method: "POST", path: "integrations/seatalk/events", handler: challengeCallback },
   { method: "POST", path: "integrations/intraday/sync", handler: intradaySyncHandler },
+  { method: "POST", path: "integrations/clusters/sync", handler: clusterSyncHandler },
 ];
 
 export type Match =

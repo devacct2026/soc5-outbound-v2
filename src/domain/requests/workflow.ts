@@ -101,7 +101,8 @@ export type EventType =
   | "DRIVER_REASSIGNED"
   | "TRUCK_DOCKED"
   | "DOCKED_EDITED"
-  | "ADMIN_OVERRIDE";
+  | "ADMIN_OVERRIDE"
+  | "BACKLOG_PROPAGATED";
 
 export interface NotificationIntent {
   /** Deterministic key so retries never create duplicate notifications. */

@@ -13,6 +13,7 @@ import {
 import {
   VersionConflictError,
   withVersionRetry,
+  type ClusterImportRow,
   type ClusterView,
   type CommandTx,
   type CommitInput,
@@ -172,16 +173,16 @@ export class MemoryStore implements Store {
     return { total: page.data.length, awaiting_action: awaiting, by_status };
   }
 
-  async notifications(actor: Actor) {
-    const mine = this.notificationLog
+  async notifications(actor: Actor, opts: { limit?: number; before?: string | null } = {}) {
+    const all = this.notificationLog
       .filter((n) => n.recipientUserId === actor.id || (n.recipientRole && n.recipientRole === actor.role))
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-      .slice(0, 50);
-    const data: NotificationView[] = mine.map((n) => ({
-      id: n.id, event: n.event, title: n.title, requestId: n.requestId, createdAt: n.createdAt,
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : a.id < b.id ? 1 : -1));
+    const page = all.filter((n) => !opts.before || n.createdAt < opts.before).slice(0, Math.min(Math.max(opts.limit ?? 50, 1), 100));
+    const view = (n: StoredNotification): NotificationView => ({
+      id: n.id, event: n.event, title: n.title, body: "", requestId: n.requestId, createdAt: n.createdAt,
       read: this.reads.has(`${n.id}:${actor.id}`),
-    }));
-    return { data, unread: data.filter((n) => !n.read).length };
+    });
+    return { data: page.map(view), unread: all.filter((n) => !this.reads.has(`${n.id}:${actor.id}`)).length };
   }
 
   async markNotificationsRead(actor: Actor, id: string | null) {
@@ -198,7 +199,37 @@ export class MemoryStore implements Store {
     return this.clusters.some((c) => c.id === id && c.active);
   }
   async searchClusters(query: string) {
-    return this.clusters.filter((c) => c.active && c.name.toLowerCase().includes(query.toLowerCase())).slice(0, 12);
+    const q = query.toLowerCase();
+    return this.clusters
+      .filter((c) => c.active && (c.name.toLowerCase().includes(q) || (c.hub ?? "").toLowerCase().includes(q)))
+      .sort((a, b) => (a.name < b.name ? -1 : 1))
+      .slice(0, 12);
+  }
+
+  async importClusters(rows: ClusterImportRow[], source: string) {
+    void source;
+    const byName = new Map(rows.map((r) => [r.name, r])); // the last duplicate wins
+    for (const r of byName.values()) {
+      const prior = this.clusters.find((c) => c.name === r.name);
+      const view = { name: r.name, hub: r.name, region: r.region, dockNo: r.dockNo, backlogs: r.backlogs, backlogsTimestamp: r.backlogsTimestamp, active: true };
+      const cluster = prior ? Object.assign(prior, view) : this.clusters[this.clusters.push({ id: crypto.randomUUID(), ...view }) - 1];
+      // Mirror of the database trigger: audited propagation to matching, non-terminal requests.
+      for (const q of this.requests.values()) {
+        const terminal = q.status === "CANCELLED" || q.rejectionDisposition === "FINAL_NO_ROUTE" || q.rejectionDisposition === "LEGACY_UNRESOLVED";
+        if (terminal || (q.clusterId !== cluster.id && q.cluster !== cluster.name)) continue;
+        if (q.backlogs === cluster.backlogs && q.backlogsTimestamp === cluster.backlogsTimestamp) continue;
+        this.eventLog.push({
+          id: String(++this.seq), type: "BACKLOG_PROPAGATED", requestId: q.id, actorId: "system", creatorId: q.createdBy, at: this.now().toISOString(),
+          fromStatus: q.status, toStatus: q.status, fromApprovalStatus: q.approvalStatus, toApprovalStatus: q.approvalStatus,
+          remarks: null, disposition: null, returnRole: null, approvalVersion: q.approvalVersion, correlationId: "cluster-import",
+          metadata: { source: "cluster_import", clusterId: cluster.id, changes: {
+            backlogs: { before: q.backlogs, after: cluster.backlogs },
+            backlogsTimestamp: { before: q.backlogsTimestamp, after: cluster.backlogsTimestamp } } },
+        });
+        this.requests.set(q.id, { ...q, backlogs: cluster.backlogs, backlogsTimestamp: cluster.backlogsTimestamp, rowVersion: q.rowVersion + 1 });
+      }
+    }
+    return { processed: byName.size };
   }
   async intraday(date: string) {
     const rows = this.dispatch.get(date) ?? [];

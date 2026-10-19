@@ -264,7 +264,7 @@ test("notifications: role + user targeting, per-user read receipts, ineligible r
   assert.equal((await call(backend, notificationsHandler, "ops1", "GET", "/n")).body.unread, 0);
   assert.equal((await call(backend, notificationsHandler, "ops2", "GET", "/n")).body.unread, 1, "read receipts are per user");
   await act(backend, "ops1", id, "approve");
-  assert.equal((await call(backend, notificationsHandler, "pic1", "GET", "/n")).body.data.some((n: { event: string }) => n.event === "REQUEST_APPROVED"), true);
+  assert.equal((await call(backend, notificationsHandler, "pic1", "GET", "/n")).body.data.some((n: { event_type: string }) => n.event_type === "REQUEST_APPROVED"), true);
 });
 
 test("KPI + exports require the reporting permission, independent of role (KPI-6); intraday for all four roles (HUB-5)", async () => {
@@ -295,7 +295,7 @@ test("KPI + exports require the reporting permission, independent of role (KPI-6
 
 test("clusters search bounds; bulk approve limits and FTE Ops only", async () => {
   const { backend, store } = setup();
-  store.clusters.push({ id: "c1", name: "Alpha Cluster", hub: null, region: "R", dockNo: "1", backlogs: 0, active: true });
+  store.clusters.push({ id: "c1", name: "Alpha Cluster", hub: null, region: "R", dockNo: "1", backlogs: 0, backlogsTimestamp: null, active: true });
   assert.equal((await call(backend, clustersHandler, "pic1", "GET", "/c?search=al")).status, 422);
   assert.equal((await call(backend, clustersHandler, "pic1", "GET", "/c?search=alpha")).body.data.length, 1);
   const a = await create(backend), b = await create(backend);

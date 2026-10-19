@@ -30,6 +30,8 @@ const routes = [
   ["integrations/seatalk/approval/reject", { POST: "rejectCallback" }, [], "@/server/seatalk/routes"],
   ["integrations/seatalk/events", { POST: "challengeCallback" }, [], "@/server/seatalk/routes"],
   ["integrations/intraday/sync", { POST: "intradaySyncHandler" }, [], "@/server/intraday-sync"],
+  ["integrations/clusters/sync", { POST: "clusterSyncHandler" }, [], "@/server/cluster-sync"],
+  ["presence/heartbeat", { POST: "heartbeatHandler" }],
 ];
 
 // Remove the superseded static route: `reject` is now an alias in [action].

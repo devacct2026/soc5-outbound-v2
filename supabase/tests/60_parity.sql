@@ -102,3 +102,19 @@ select pg_temp.fails_with($$select assign_next_approver(gen_random_uuid(), gen_r
 select pg_temp.fails_with($$select import_clusters('[]')$$, '42501', 'browsers cannot import clusters');
 select pg_temp.fails_with($$select submit_access_request('abc','ops1')$$, '42501', 'browsers cannot call privileged user functions');
 reset role;
+
+-- ===== lead 11: notification feed covers every visible notice
+insert into notifications (dedupe_key, event_type, title, recipient_role, created_at)
+  select 'feed-' || g, 'X', 'role notice ' || g, 'fte_mm', now() - make_interval(mins => g) from generate_series(1, 120) g;
+insert into notifications (dedupe_key, event_type, title, recipient_user_id) values ('feed-user', 'X', 'direct', '00000000-0000-0000-0000-0000000000c1');
+select pg_temp.ok(notification_unread_count('00000000-0000-0000-0000-0000000000c1', 'fte_mm') >= 121, 'unread spans the whole feed, not one page');
+select pg_temp.ok((select count(*) from notification_feed('00000000-0000-0000-0000-0000000000c1', 'fte_mm', 500)) = 100, 'page size is capped at 100');
+select pg_temp.ok((select count(*) from notification_feed('00000000-0000-0000-0000-0000000000d1', 'doc_officer', 50)) = 0, 'other roles do not see role-targeted notices');
+select pg_temp.ok(notification_mark_read('00000000-0000-0000-0000-0000000000c1', 'fte_mm', null) >= 121, 'mark-all covers notices beyond the first page');
+select pg_temp.ok(notification_unread_count('00000000-0000-0000-0000-0000000000c1', 'fte_mm') = 0, 'all read');
+select pg_temp.ok(notification_mark_read('00000000-0000-0000-0000-0000000000c1', 'fte_mm', null) = 0, 'idempotent');
+select pg_temp.ok(notification_unread_count('00000000-0000-0000-0000-0000000000b1', 'fte_ops') >= 0 and notification_unread_count('00000000-0000-0000-0000-0000000000c1', 'fte_mm') = 0, 'receipts are per user');
+select pg_temp.ok(notification_mark_read('00000000-0000-0000-0000-0000000000d1', 'doc_officer', (select id from notifications where dedupe_key='feed-user')) = -1, 'cannot mark a notice you cannot see');
+set role authenticated;
+select pg_temp.fails_with($$select notification_unread_count(gen_random_uuid(), 'fte_mm')$$, '42501', 'browsers cannot call feed functions');
+reset role;

@@ -69,6 +69,8 @@ export interface Backend {
   anonLimiter?: RateLimiter;
   /** Shared secret for the Google Apps Script intraday sync (server-only). */
   intradaySecret?: string;
+  /** Shared secret for the Google Apps Script cluster sync (server-only). */
+  clusterSyncSecret?: string;
   /** Present only when a signature secret is configured; still gated by features.seatalkApproval. */
   seatalk?: SeatalkWiring;
   /** Presence/routing/provisioning (present when the SeaTalk provider is configured). */
