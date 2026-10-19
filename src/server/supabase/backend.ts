@@ -25,6 +25,7 @@ import { fromRow, toRow } from "./mapping.ts";
 import { Rest, RestError, q } from "./rest.ts";
 import { SupabaseAdmin } from "../admin-ports.ts";
 import { SupabaseApprovalStore } from "../seatalk/supabase.ts";
+import type { SheetSource } from "../integrations/sheets.ts";
 
 const ACTIVE_AWAITING = new Set(["PENDING", "REROUTED", "REQUESTED", "DOCKING"]);
 
@@ -280,6 +281,18 @@ export class SupabaseStore implements Store {
       rows.map((r) => ({ dispatch_date: r.date, hour: r.hour, order_qty: r.orderQty, synced_at: this.now().toISOString() })),
       "resolution=merge-duplicates,return=minimal",
     );
+  }
+
+  async sheetRows(limit: number): Promise<SheetSource[]> {
+    const rows = (await this.rest.rpc("sheet_export_rows", { p_limit: limit })) as Record<string, unknown>[];
+    const n = (v: unknown) => (v === null || v === undefined ? null : String(v));
+    return rows.map((r) => ({
+      requestTimestamp: String(r.request_timestamp), cluster: String(r.cluster), region: String(r.region), dockNo: n(r.dock_no),
+      backlogs: Number(r.backlogs), backlogsTimestamp: n(r.backlogs_timestamp), lhTypeRequest: n(r.lh_type_request), opsFte: n(r.ops_fte),
+      plateNumber: n(r.plate_number), mmFte: n(r.mm_fte), truckSize: String(r.truck_size), truckType: String(r.truck_type),
+      provideTime: n(r.provide_time), linehaulTripNo: n(r.linehaul_trip_no), assignedTime: n(r.assigned_time), dockedAt: n(r.docked_at),
+      docOfficer: n(r.doc_officer), opsPic: n(r.ops_pic), status: String(r.status),
+    }));
   }
 
   async reportingRows(from: string, to: string) {

@@ -1,18 +1,76 @@
-// Google Sheets request synchronization (docs/backend/06-integrations.md).
-// Credentials are server-only. The column set below is a v2 definition: the
-// original 19-column layout is not in this checkout and must be confirmed
-// against the production sheet before enabling (recorded as a blocker).
+// Google Sheets request synchronization (docs/backend/06-integrations.md), restored to the ORIGINAL 19-column
+// layout (source: backend/app/Integrations/GoogleSheets/GoogleSheetsRequestSync.php):
+//  * columns A..S with the exact header texts below;
+//  * attribution = actor of the LAST REQUEST_APPROVED / TRUCK_ASSIGNED / driver-assignment event, creator name for OPS/PIC;
+//  * timestamps formatted `n/j/Y G:i:s` (no zero padding, 24 h) in Asia/Manila; null/empty = "";
+//  * rows ordered by request time ascending, header first, full snapshot written with valueInputOption=RAW and the
+//    leftover range cleared only AFTER a successful write.
+// Deviation (security hardening, documented in the parity matrix): cell text beginning with = + - @ is prefixed
+// with an apostrophe so a later export to Excel cannot evaluate it as a formula.
+// Credentials are server-only. Not exercised against live Google (no approved credentials).
 import { createSign } from "node:crypto";
-import type { RequestRecord } from "../../domain/requests/lifecycle.ts";
 import { toCsv } from "../../domain/kpi.ts";
 
-export const SHEET_COLUMNS = [
-  "request_id", "request_timestamp", "cluster", "region", "dock_no", "backlogs", "truck_size", "truck_type",
-  "status", "approval_status", "approved_at", "plate_number", "provide_time", "driver_id", "driver_assigned_at",
-  "linehaul_trip_no", "docked_at", "cancellation_remarks", "created_by",
+export const SHEET_HEADERS = [
+  "Request time",
+  "Cluster",
+  "Region",
+  "Dock #",
+  "Backlog",
+  "Backlogs Time Stamp",
+  "LH type (input by FTE MM) (Request)",
+  "Ops FTE",
+  "Plate number",
+  "MM FTE",
+  "LH size",
+  "LH type (input by FTE MM)",
+  "Provide Time",
+  "Linehaul Trip",
+  "Assigned time",
+  "Docked Time",
+  "DOC Officer",
+  "OPS/PIC",
+  "Status",
 ] as const;
+export const SHEET_COLUMNS = SHEET_HEADERS; // back-compat alias
+export const SHEET_TIMEZONE = "Asia/Manila";
 
-/** Neutralise spreadsheet formula injection even though cells are written RAW. */
+/** One request plus its server-side attribution (see sheet_export_rows). */
+export interface SheetSource {
+  requestTimestamp: string;
+  cluster: string;
+  region: string;
+  dockNo: string | null;
+  backlogs: number;
+  backlogsTimestamp: string | null;
+  lhTypeRequest: string | null;
+  opsFte: string | null;
+  plateNumber: string | null;
+  mmFte: string | null;
+  truckSize: string;
+  truckType: string;
+  provideTime: string | null;
+  linehaulTripNo: string | null;
+  assignedTime: string | null;
+  dockedAt: string | null;
+  docOfficer: string | null;
+  opsPic: string | null;
+  status: string;
+}
+
+/** `n/j/Y G:i:s` in the business timezone, e.g. 9/5/2026 14:03:09. Empty for null/invalid input. */
+export function formatSheetTime(iso: string | null | undefined, tz: string = SHEET_TIMEZONE): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const p: Record<string, string> = {};
+  for (const x of new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit",
+  }).formatToParts(new Date(t))) p[x.type] = x.value;
+  return `${p.month}/${p.day}/${p.year} ${Number(p.hour) % 24}:${p.minute}:${p.second}`;
+}
+
+/** Neutralise spreadsheet formula injection (see deviation note above). */
 export const safeCell = (v: unknown): string | number => {
   if (v === null || v === undefined) return "";
   if (typeof v === "number") return v;
@@ -20,13 +78,29 @@ export const safeCell = (v: unknown): string | number => {
   return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
 };
 
-export function buildSheetRows(requests: RequestRecord[]): (string | number)[][] {
-  const sorted = [...requests].sort((a, b) => (a.requestTimestamp < b.requestTimestamp ? -1 : 1));
+export function buildSheetRows(requests: SheetSource[]): (string | number)[][] {
+  const sorted = [...requests].sort((a, b) => (a.requestTimestamp < b.requestTimestamp ? -1 : a.requestTimestamp > b.requestTimestamp ? 1 : 0));
   return sorted.map((r) =>
     [
-      r.id, r.requestTimestamp, r.cluster, r.region, r.dockNo, r.backlogs, r.truckSize, r.truckType, r.status,
-      r.approvalStatus, r.approvedAt, r.plateNumber, r.provideTime, r.driverId, r.driverAssignedAt, r.linehaulTripNo,
-      r.dockedAt, r.cancellationRemarks, r.createdBy,
+      formatSheetTime(r.requestTimestamp),
+      r.cluster,
+      r.region,
+      r.dockNo,
+      r.backlogs,
+      formatSheetTime(r.backlogsTimestamp),
+      r.lhTypeRequest ?? r.truckType,
+      r.opsFte,
+      r.plateNumber,
+      r.mmFte,
+      r.truckSize,
+      r.truckType,
+      formatSheetTime(r.provideTime),
+      r.linehaulTripNo,
+      formatSheetTime(r.assignedTime),
+      formatSheetTime(r.dockedAt),
+      r.docOfficer,
+      r.opsPic,
+      r.status,
     ].map(safeCell),
   );
 }
@@ -45,12 +119,12 @@ export const MAX_SHEET_ROWS = 50_000;
 
 export async function syncRequestsToSheet(
   client: SheetsClient,
-  requests: RequestRecord[],
+  requests: SheetSource[],
   previousRowCount: number,
   maxRows = MAX_SHEET_ROWS,
 ) {
   if (requests.length > maxRows) throw new Error(`row count ${requests.length} exceeds limit ${maxRows}`);
-  return client.replace([...SHEET_COLUMNS], buildSheetRows(requests), previousRowCount);
+  return client.replace([...SHEET_HEADERS], buildSheetRows(requests), previousRowCount);
 }
 
 // ---------------------------------------------------------- REST client
@@ -87,18 +161,20 @@ export function createGoogleSheetsClient(creds: GoogleCreds, fetchImpl: typeof f
     async replace(header, rows, previousRowCount) {
       const t = await token();
       const headers = { authorization: `Bearer ${t}`, "content-type": "application/json" };
-      const sheet = encodeURIComponent(creds.sheetName);
-      const lastCol = String.fromCharCode(64 + header.length); // A..S for 19 columns
+      // Sheet names are quoted in A1 notation; an embedded quote is doubled (as the original did).
+      const sheet = encodeURIComponent(`'${creds.sheetName.replace(/'/g, "''")}'`);
+      const lastCol = String.fromCharCode(64 + header.length); // A..S for the 19 columns
       const put = await fetchImpl(`${base}/${sheet}!A1:${lastCol}${rows.length + 1}?valueInputOption=RAW`, {
         method: "PUT", headers, body: JSON.stringify({ values: [header, ...rows] }), signal: AbortSignal.timeout(60_000),
       });
       if (!put.ok) throw new Error(`sheets write failed: ${put.status}`);
-      if (previousRowCount > rows.length) {
-        const clear = await fetchImpl(`${base}/${sheet}!A${rows.length + 2}:${lastCol}${previousRowCount + 1}:clear`, {
-          method: "POST", headers, body: "{}", signal: AbortSignal.timeout(30_000),
-        });
-        if (!clear.ok) throw new Error(`sheets clear failed: ${clear.status}`); // stale rows cleared only after a good write
-      }
+      // Stale rows below the new data and anything the old layout left in T:Z, cleared only after a good write.
+      const ranges = [`'${creds.sheetName.replace(/'/g, "''")}'!T1:Z`, `'${creds.sheetName.replace(/'/g, "''")}'!A${rows.length + 2}:${lastCol}`];
+      const clear = await fetchImpl(`${base}:batchClear`, {
+        method: "POST", headers, body: JSON.stringify({ ranges }), signal: AbortSignal.timeout(30_000),
+      });
+      if (!clear.ok) throw new Error(`sheets clear failed: ${clear.status}`);
+      void previousRowCount;
       return { written: rows.length };
     },
   };

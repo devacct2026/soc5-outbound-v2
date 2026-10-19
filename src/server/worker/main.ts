@@ -6,7 +6,7 @@ import { runWorkerOnce, type Channel, type ChannelHandler } from "./outbox-worke
 import { SupabaseOutboxPort } from "./ports.ts";
 import { Rest } from "../supabase/rest.ts";
 import { SupabaseStore } from "../supabase/backend.ts";
-import { createGoogleSheetsClient, syncRequestsToSheet } from "../integrations/sheets.ts";
+import { createGoogleSheetsClient, MAX_SHEET_ROWS, syncRequestsToSheet } from "../integrations/sheets.ts";
 import { approvalCoordinatorFromEnv } from "../seatalk/wiring.ts";
 import { reconcileApprovals } from "../seatalk/reconcile.ts";
 import { SupabaseApprovalStore } from "../seatalk/supabase.ts";
@@ -42,7 +42,8 @@ export function buildHandlers(
     });
     let previous = 0;
     handlers.GOOGLE_SHEETS = async () => {
-      const rows = await store.reportingRows("2000-01-01", "2999-12-31");
+      // cap + 1 so an over-limit table fails loudly instead of being silently truncated
+      const rows = await store.sheetRows(MAX_SHEET_ROWS + 1);
       const r = await syncRequestsToSheet(client, rows, previous);
       previous = r.written;
       return { acknowledged: true };

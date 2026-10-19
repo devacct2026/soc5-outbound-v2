@@ -4,6 +4,7 @@ import type { RequestRecord } from "../domain/requests/lifecycle.ts";
 import type { Actor, NotificationIntent, RequestEvent } from "../domain/requests/workflow.ts";
 import type { Cursor } from "../domain/pagination.ts";
 import type { Schedule } from "../domain/kpi.ts";
+import type { SheetSource } from "./integrations/sheets.ts";
 
 export interface StoredResponse {
   status: number;
@@ -129,6 +130,8 @@ export interface Store {
   upsertIntraday(rows: { date: string; hour: number; orderQty: number }[]): Promise<void>;
   /** Raw rows for reporting; the service applies KPI definitions + authorization. */
   reportingRows(from: string, to: string): Promise<RequestRecord[]>;
+  /** Google Sheets export rows with server-side attribution, oldest first, at most `limit` (callers pass cap + 1). */
+  sheetRows(limit: number): Promise<SheetSource[]>;
 }
 
 /** Raised when a reporting window exceeds the safe row cap; never silently truncate. */

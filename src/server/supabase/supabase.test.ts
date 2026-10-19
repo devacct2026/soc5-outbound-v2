@@ -4,12 +4,10 @@ import { generateKeyPairSync } from "node:crypto";
 import { createSupabaseBackend, makeAuthenticator, SupabaseStore } from "./backend.ts";
 import { Rest, RestError, q } from "./rest.ts";
 import { fromRow, toRow } from "./mapping.ts";
-import { createRequest } from "../../domain/requests/lifecycle.ts";
 import { runCommand } from "../commands.ts";
 import { VersionConflictError } from "../store.ts";
 import { SupabaseOutboxPort } from "../worker/ports.ts";
-import { buildSheetRows, createGoogleSheetsClient, safeCell, syncRequestsToSheet, SHEET_COLUMNS } from "../integrations/sheets.ts";
-import type { RequestRecord } from "../../domain/requests/lifecycle.ts";
+import { buildSheetRows, createGoogleSheetsClient, formatSheetTime, safeCell, syncRequestsToSheet, SHEET_HEADERS, type SheetSource } from "../integrations/sheets.ts";
 
 const SERVICE = "service-key-SECRET-xxxxxxxxxxxxxxxxxx";
 const ANON = "anon-key-xxxxxxxxxxxxxxxxxxxx";
@@ -169,17 +167,31 @@ test("outbox port maps claim_outbox rows and passes the channel filter", async (
 });
 
 // ----------------------------------------------------------------- sheets
-const rec = (o: Partial<RequestRecord> = {}): RequestRecord => {
-  const r = createRequest({ id: "u", role: "ops_pic", active: true }, { clusterId: null, cluster: "=cmd|' /C calc'!A0", region: "R", dockNo: "1", backlogs: 1, backlogsTimestamp: null, truckSize: "4W", truckType: "WETLEASE" }, { now: new Date("2026-10-19T10:00:00Z"), correlationId: "c", newId: crypto.randomUUID() });
-  if (!r.ok) throw new Error();
-  return { ...(r.request as RequestRecord), ...o };
-};
+const rec = (o: Partial<SheetSource> = {}): SheetSource => ({
+  requestTimestamp: "2026-09-05T06:03:09Z", cluster: "=cmd|' /C calc'!A0", region: "R", dockNo: "1", backlogs: 7, backlogsTimestamp: "2026-09-05T01:00:05Z",
+  lhTypeRequest: "WETLEASE", opsFte: "Olive Ops", plateNumber: "ABC123", mmFte: "Mike MM", truckSize: "6W", truckType: "DRYLEASE",
+  provideTime: "2026-09-05T07:00:00Z", linehaulTripNo: "LT-1", assignedTime: "2026-09-05T06:30:00Z", dockedAt: "2026-09-05T08:15:30Z",
+  docOfficer: "Dora Doc", opsPic: "Pat Creator", status: "DOCKED", ...o,
+});
 
-test("sheets: 19 columns, formula injection neutralised, row limit enforced, stale rows cleared only after a good write", async () => {
-  assert.equal(SHEET_COLUMNS.length, 19);
-  const rows = buildSheetRows([rec()]);
+test("sheets: original 19 columns, headers, attribution, n/j/Y G:i:s Asia/Manila timestamps, ascending order, formula text neutralised", async () => {
+  assert.deepEqual([...SHEET_HEADERS], [
+    "Request time", "Cluster", "Region", "Dock #", "Backlog", "Backlogs Time Stamp", "LH type (input by FTE MM) (Request)", "Ops FTE", "Plate number",
+    "MM FTE", "LH size", "LH type (input by FTE MM)", "Provide Time", "Linehaul Trip", "Assigned time", "Docked Time", "DOC Officer", "OPS/PIC", "Status",
+  ]);
+  const rows = buildSheetRows([rec({ requestTimestamp: "2026-09-06T00:00:00Z", status: "PENDING" }), rec()]);
   assert.equal(rows[0].length, 19);
-  assert.ok(String(rows[0][2]).startsWith("'="));
+  assert.equal(rows[0][0], "9/5/2026 14:03:09", "first row is the OLDEST request; Manila time, no zero padding");
+  assert.equal(rows[1][0], "9/6/2026 8:00:00");
+  assert.deepEqual(rows[0].slice(3, 6), ["1", 7, "9/5/2026 9:00:05"], "backlog is a raw number; backlog time formatted");
+  assert.deepEqual([rows[0][6], rows[0][7], rows[0][9], rows[0][10], rows[0][11]], ["WETLEASE", "Olive Ops", "Mike MM", "6W", "DRYLEASE"]);
+  assert.deepEqual([rows[0][12], rows[0][13], rows[0][14], rows[0][15], rows[0][16], rows[0][17], rows[0][18]], ["9/5/2026 15:00:00", "LT-1", "9/5/2026 14:30:00", "9/5/2026 16:15:30", "Dora Doc", "Pat Creator", "DOCKED"]);
+  assert.ok(String(rows[0][1]).startsWith("'="), "formula-like text is neutralised");
+  assert.equal(formatSheetTime(null), "");
+  assert.equal(formatSheetTime("not a date"), "");
+  assert.equal(formatSheetTime("2026-01-01T16:00:00Z"), "1/2/2026 0:00:00", "midnight rolls the Manila date");
+  assert.equal(buildSheetRows([rec({ lhTypeRequest: null, opsFte: null, docOfficer: null })])[0][6], "DRYLEASE", "requested type falls back to the current type");
+  assert.equal(buildSheetRows([rec({ opsFte: null })])[0][7], "", "null cells are empty strings");
   assert.equal(safeCell(null), "");
   assert.equal(safeCell(5), 5);
   const calls: string[] = [];
@@ -190,7 +202,7 @@ test("sheets: 19 columns, formula injection neutralised, row limit enforced, sta
   assert.equal(calls.length, 1, "nothing written when over the limit");
 });
 
-test("google client: JWT exchange then PUT then clear; a failed write never clears", async () => {
+test("google client: JWT exchange, RAW PUT of A1:S, then batchClear (T:Z and the tail) only after a good write", async () => {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
   const run = async (putStatus: number) => {
     const s = stub((c) => {
@@ -198,18 +210,20 @@ test("google client: JWT exchange then PUT then clear; a failed write never clea
       if (c.method === "PUT") return { status: putStatus, body: {} };
       return { body: {} };
     });
-    const client = createGoogleSheetsClient({ clientEmail: "svc@x.iam", privateKey, spreadsheetId: "SID", sheetName: "Requests" }, s.fetchImpl, () => new Date("2026-10-19T10:00:00Z"));
-    const res = await client.replace([...SHEET_COLUMNS], [["a"]], 10).then(() => "ok", () => "error");
+    const client = createGoogleSheetsClient({ clientEmail: "svc@x.iam", privateKey, spreadsheetId: "SID", sheetName: "O'Brien Requests" }, s.fetchImpl, () => new Date("2026-10-19T10:00:00Z"));
+    const res = await client.replace([...SHEET_HEADERS], [["a"]], 10).then(() => "ok", () => "error");
     return { res, calls: s.calls };
   };
   const good = await run(200);
   assert.equal(good.res, "ok");
   assert.deepEqual(good.calls.map((c) => c.method), ["POST", "PUT", "POST"]);
   assert.match(good.calls[1].url, /valueInputOption=RAW/);
-  assert.match(good.calls[2].url, /:clear$/);
+  assert.match(decodeURIComponent(good.calls[1].url), /'O''Brien Requests'!A1:S2/);
+  assert.match(good.calls[2].url, /values:batchClear$/);
+  assert.deepEqual(good.calls[2].body, { ranges: ["'O''Brien Requests'!T1:Z", "'O''Brien Requests'!A3:S"] });
   const bad = await run(500);
   assert.equal(bad.res, "error");
-  assert.ok(!bad.calls.some((c) => c.url.endsWith(":clear")), "stale rows are kept when the write fails");
+  assert.ok(!bad.calls.some((c) => c.url.endsWith(":batchClear")), "stale rows are kept when the write fails");
 });
 
 test("legacy SUPABASE_* env names are ignored: v2 never connects to the original project by accident", async () => {

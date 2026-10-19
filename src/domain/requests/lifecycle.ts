@@ -162,6 +162,7 @@ export function createRequest(
     actor,
     null,
     ctx,
+    { lh_type_request: details.truckType }, // sheet column 7 keeps the type that was REQUESTED, before FTE MM may change it
   );
   const notifications = notify(event, [{ role: "fte_ops" }], ctx.extraRecipientIds, "New request awaiting approval");
   return { ok: true, request, event, notifications };

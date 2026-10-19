@@ -2,6 +2,7 @@
 import { canView } from "../domain/permissions.ts";
 import { localDate, DEFAULT_SCHEDULE, type Schedule } from "../domain/kpi.ts";
 import { paginate, type Cursor } from "../domain/pagination.ts";
+import type { SheetSource } from "./integrations/sheets.ts";
 import type { RequestRecord } from "../domain/requests/lifecycle.ts";
 import {
   countsAsAwaitingAction,
@@ -246,6 +247,29 @@ export class MemoryStore implements Store {
       this.dispatch.set(r.date, next);
     }
   }
+  /** Display names for attribution (tests); unknown ids fall back to the id itself. */
+  names = new Map<string, string>();
+
+  async sheetRows(limit: number): Promise<SheetSource[]> {
+    const name = (id: string | null | undefined) => (id ? (this.names.get(id) ?? id) : null);
+    const last = (rid: string, types: string[]) => [...this.eventLog].reverse().find((e) => e.requestId === rid && types.includes(e.type));
+    return [...this.requests.values()]
+      .sort((a, b) => (a.requestTimestamp < b.requestTimestamp ? -1 : a.requestTimestamp > b.requestTimestamp ? 1 : a.id < b.id ? -1 : 1))
+      .slice(0, limit)
+      .map((r) => {
+        const created = last(r.id, ["REQUEST_CREATED"]);
+        const assigned = last(r.id, ["TRUCK_ASSIGNED"]);
+        return {
+          requestTimestamp: r.requestTimestamp, cluster: r.cluster, region: r.region, dockNo: r.dockNo, backlogs: r.backlogs,
+          backlogsTimestamp: r.backlogsTimestamp, lhTypeRequest: (created?.metadata?.lh_type_request as string | undefined) ?? r.truckType,
+          opsFte: name(last(r.id, ["REQUEST_APPROVED"])?.actorId), plateNumber: r.plateNumber,
+          mmFte: name(assigned?.actorId), truckSize: r.truckSize, truckType: r.truckType, provideTime: r.provideTime,
+          linehaulTripNo: r.linehaulTripNo, assignedTime: assigned?.at ?? null, dockedAt: r.dockedAt,
+          docOfficer: name(last(r.id, ["DRIVER_ASSIGNED", "DRIVER_REASSIGNED"])?.actorId), opsPic: name(r.createdBy), status: r.status,
+        };
+      });
+  }
+
   async reportingRows(from: string, to: string) {
     const tz = DEFAULT_SCHEDULE.timezone;
     return [...this.requests.values()].filter((r) => {

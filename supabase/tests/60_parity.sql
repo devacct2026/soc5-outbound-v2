@@ -118,3 +118,20 @@ select pg_temp.ok(notification_mark_read('00000000-0000-0000-0000-0000000000d1',
 set role authenticated;
 select pg_temp.fails_with($$select notification_unread_count(gen_random_uuid(), 'fte_mm')$$, '42501', 'browsers cannot call feed functions');
 reset role;
+
+-- ===== lead 9: sheet export attribution
+update profiles set full_name = 'Pat Creator' where id = '00000000-0000-0000-0000-0000000000a1';
+update profiles set full_name = 'Olive Ops' where id = '00000000-0000-0000-0000-0000000000b1';
+update profiles set full_name = 'Mike MM' where id = '00000000-0000-0000-0000-0000000000c1';
+update profiles set full_name = 'Dora Doc' where id = '00000000-0000-0000-0000-0000000000d1';
+select pg_temp.mkreq('80000000-0000-0000-0000-000000000001', 'Sheet Hub', '2026-10-20T10:00:00Z');
+insert into request_events (request_id, event_type, actor_id, metadata) values
+  ('80000000-0000-0000-0000-000000000001', 'REQUEST_CREATED', '00000000-0000-0000-0000-0000000000a1', '{"lh_type_request":"WETLEASE"}'),
+  ('80000000-0000-0000-0000-000000000001', 'REQUEST_APPROVED', '00000000-0000-0000-0000-0000000000b2', '{}'),
+  ('80000000-0000-0000-0000-000000000001', 'REQUEST_APPROVED', '00000000-0000-0000-0000-0000000000b1', '{}'),
+  ('80000000-0000-0000-0000-000000000001', 'TRUCK_ASSIGNED', '00000000-0000-0000-0000-0000000000c1', '{}'),
+  ('80000000-0000-0000-0000-000000000001', 'DRIVER_ASSIGNED', '00000000-0000-0000-0000-0000000000d1', '{}');
+select pg_temp.ok((select ops_fte = 'Olive Ops' and mm_fte = 'Mike MM' and doc_officer = 'Dora Doc' and ops_pic = 'Pat Creator'
+  and lh_type_request = 'WETLEASE' and truck_type = 'DRYLEASE' and assigned_time is not null
+  from sheet_export_rows(100000) where request_id = '80000000-0000-0000-0000-000000000001'), 'attribution: last event of each type wins, names resolved server-side');
+select pg_temp.ok((select request_id from sheet_export_rows(1)) = (select id from requests order by request_timestamp asc, id asc limit 1), 'ordered by request time ascending');
