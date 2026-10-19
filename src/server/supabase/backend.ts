@@ -335,30 +335,34 @@ function dayStart(d: string, tz: string) {
   return new Date(base - (seen - base)).toISOString();
 }
 
-/** Validate the bearer token with Supabase Auth, then load the CURRENT profile (no cache: revocation is immediate, OPS-3). */
-export function makeAuthenticator(cfg: SupabaseConfig, rest: Rest) {
+/** Validate the bearer token with Supabase Auth, returning the user id (null if invalid/unreachable). */
+async function resolveUserId(cfg: SupabaseConfig, request: Request): Promise<string | null> {
   const f = cfg.fetchImpl ?? fetch;
+  const header = request.headers.get("authorization") ?? "";
+  const m = /^Bearer ([A-Za-z0-9._~+/=-]{20,4096})$/.exec(header);
+  if (!m) return null;
+  try {
+    const res = await f(`${cfg.url.replace(/\/$/, "")}/auth/v1/user`, {
+      headers: { apikey: cfg.anonKey, authorization: `Bearer ${m[1]}` },
+      signal: AbortSignal.timeout(8_000),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const u = (await res.json()) as { id?: string };
+    return u.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Load the CURRENT profile on every request (no cache: revocation is immediate, OPS-3). */
+export function makeAuthenticator(cfg: SupabaseConfig, rest: Rest) {
   return async (request: Request): Promise<Actor | null> => {
-    const header = request.headers.get("authorization") ?? "";
-    const m = /^Bearer ([A-Za-z0-9._~+/=-]{20,4096})$/.exec(header);
-    if (!m) return null;
-    let userId: string;
-    try {
-      const res = await f(`${cfg.url.replace(/\/$/, "")}/auth/v1/user`, {
-        headers: { apikey: cfg.anonKey, authorization: `Bearer ${m[1]}` },
-        signal: AbortSignal.timeout(8_000),
-        cache: "no-store",
-      });
-      if (!res.ok) return null;
-      const u = (await res.json()) as { id?: string };
-      if (!u.id) return null;
-      userId = u.id;
-    } catch {
-      return null;
-    }
+    const userId = await resolveUserId(cfg, request);
+    if (!userId) return null;
     const rows = await rest.select(
       "profiles",
-      `id=eq.${q(userId)}&select=id,role,account_status,is_admin,reporting_permission&limit=1`,
+      `id=eq.${q(userId)}&select=id,role,account_status,is_admin,reporting_permission,must_change_password&limit=1`,
     );
     const p = rows[0];
     if (!p) return null;
@@ -370,6 +374,22 @@ export function makeAuthenticator(cfg: SupabaseConfig, rest: Rest) {
       active: true,
       isAdmin: p.is_admin === true,
       reportingPermission: p.reporting_permission === true,
+      mustChangePassword: p.must_change_password === true,
+    };
+  };
+}
+
+/** Status of any authenticated identity (so a PENDING_APPROVAL user can be told to wait). Exposes no data. */
+export function makeAccountResolver(cfg: SupabaseConfig, rest: Rest) {
+  return async (request: Request) => {
+    const userId = await resolveUserId(cfg, request);
+    if (!userId) return null;
+    const p = (await rest.select("profiles", `id=eq.${q(userId)}&select=role,account_status,must_change_password&limit=1`))[0];
+    if (!p) return null;
+    return {
+      status: p.account_status as "PENDING_APPROVAL" | "ACTIVE" | "DISABLED",
+      role: (p.role as Role | null) ?? null,
+      mustChangePassword: p.must_change_password === true,
     };
   };
 }
@@ -381,6 +401,8 @@ export interface SupabaseBackendOptions {
   seatalkEventSecret?: string;
   approvals?: ApprovalCoordinator;
   presenceActiveSeconds?: number;
+  auth?: Backend["auth"];
+  clusterSyncSecret?: string;
   seatalkMaxSkewSeconds?: number;
   actorLimiter?: Backend["actorLimiter"];
   anonLimiter?: Backend["anonLimiter"];
@@ -393,7 +415,10 @@ export function createSupabaseBackend(cfg: SupabaseConfig, opts: SupabaseBackend
   return makeBackend({
     store: new SupabaseStore(rest),
     authenticate: makeAuthenticator(cfg, rest),
+    account: makeAccountResolver(cfg, rest),
     admin: new SupabaseAdmin(rest),
+    ...(opts.auth ? { auth: opts.auth } : {}),
+    ...(opts.clusterSyncSecret ? { clusterSyncSecret: opts.clusterSyncSecret } : {}),
     ...(opts.features ? { features: opts.features } : {}),
     ...(opts.actorLimiter ? { actorLimiter: opts.actorLimiter } : {}),
     ...(opts.anonLimiter ? { anonLimiter: opts.anonLimiter } : {}),

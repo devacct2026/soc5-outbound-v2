@@ -6,6 +6,7 @@ import { approveCallback, challengeCallback, rejectCallback } from "./seatalk/ro
 import { intradaySyncHandler } from "./intraday-sync.ts";
 import { clusterSyncHandler } from "./cluster-sync.ts";
 import { loginHandler } from "./login.ts";
+import * as authFlows from "./auth/handlers.ts";
 import type { Backend } from "./backend.ts";
 
 export type RouteHandler = (backend: Backend | null, request: Request, params?: Record<string, string>) => Promise<Response>;
@@ -38,6 +39,20 @@ export const ROUTES: Route[] = [
   { method: "GET", path: "kpi/export", handler: api.kpiExportHandler },
   { method: "GET", path: "auth/me", handler: api.meHandler },
   { method: "POST", path: "presence/heartbeat", handler: api.heartbeatHandler },
+  { method: "GET", path: "auth/status", handler: authFlows.accountStatusHandler },
+  { method: "POST", path: "auth/backroom/login", handler: authFlows.backroomLoginHandler },
+  { method: "POST", path: "auth/otp/request", handler: authFlows.otpRequestHandler },
+  { method: "POST", path: "auth/otp/verify", handler: authFlows.otpVerifyHandler },
+  { method: "GET", path: "auth/google/start", handler: authFlows.googleStartHandler },
+  { method: "GET", path: "auth/seatalk/config", handler: authFlows.seatalkConfigHandler },
+  { method: "GET", path: "auth/seatalk/callback", handler: authFlows.seatalkCallbackHandler },
+  { method: "POST", path: "auth/password-changed", handler: authFlows.passwordChangedHandler },
+  { method: "POST", path: "access-requests", handler: authFlows.accessRequestHandler },
+  { method: "GET", path: "users", handler: authFlows.listUsersHandler },
+  { method: "POST", path: "users", handler: authFlows.createUserHandler },
+  { method: "PUT", path: "users/:id", handler: authFlows.updateUserHandler },
+  { method: "PATCH", path: "users/:id/disable", handler: authFlows.disableUserHandler },
+  { method: "POST", path: "users/:id/reset-password", handler: authFlows.resetPasswordHandler },
   { method: "POST", path: "auth/login", handler: loginHandler },
   { method: "GET", path: "operations/outbox/status", handler: admin.outboxStatusHandler },
   { method: "POST", path: "operations/outbox/:id/:action", handler: admin.outboxActionHandler },

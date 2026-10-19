@@ -8,6 +8,7 @@ import type { AdminPort } from "./admin.ts";
 import type { SeatalkWiring } from "./seatalk/callback.ts";
 import type { ApprovalCoordinator } from "./seatalk/approvals.ts";
 import type { ApprovalStore } from "./seatalk/contract.ts";
+import type { AuthServices } from "./auth/handlers.ts";
 import { createRateLimiter, type RateLimiter } from "./rate-limit.ts";
 
 /**
@@ -73,6 +74,10 @@ export interface Backend {
   clusterSyncSecret?: string;
   /** Present only when a signature secret is configured; still gated by features.seatalkApproval. */
   seatalk?: SeatalkWiring;
+  /** Sign-in flows + user administration (present when Supabase Auth is configured). */
+  auth?: AuthServices;
+  /** Account status for ANY authenticated identity, including PENDING_APPROVAL/DISABLED (no operational access). */
+  account?: (request: Request) => Promise<{ status: "PENDING_APPROVAL" | "ACTIVE" | "DISABLED"; role: Actor["role"] | null; mustChangePassword: boolean } | null>;
   /** Presence/routing/provisioning (present when the SeaTalk provider is configured). */
   approvals?: ApprovalCoordinator;
   /** A heartbeat counts as "present" for this long (SEA-6 sandbox default 60 s). */
@@ -113,6 +118,8 @@ export async function getBackend(): Promise<Backend | null> {
   const { approvalCoordinatorFromEnv } = await import("./seatalk/wiring.ts");
   const rest = new Rest({ url, serviceKey: service });
   const approvals = approvalCoordinatorFromEnv(process.env, rest, new SupabaseStore(rest)) ?? undefined;
+  const { authFromEnv } = await import("./auth/wiring.ts");
+  const auth = authFromEnv(process.env, { url, anonKey: anon, serviceKey: service }, rest) ?? undefined;
   const flag = (n: string) => process.env[n] === "true";
   const perMinute = (name: string, dflt: number) => createRateLimiter({ limit: positiveNumber(process.env[name], dflt), windowMs: 60_000 });
   cached = createSupabaseBackend({ url, anonKey: anon, serviceKey: service }, {
@@ -122,6 +129,8 @@ export async function getBackend(): Promise<Backend | null> {
     seatalkSecret: process.env.SOC5_SEATALK_CALLBACK_SECRET,
     seatalkEventSecret: process.env.SOC5_SEATALK_SIGNING_SECRET,
     approvals,
+    auth,
+    clusterSyncSecret: process.env.SOC5_CLUSTER_SYNC_SECRET,
     presenceActiveSeconds: positiveNumber(process.env.SOC5_PRESENCE_ACTIVE_SECONDS, 60),
     seatalkMaxSkewSeconds: positiveNumber(process.env.SOC5_SEATALK_CALLBACK_MAX_SKEW_SECONDS, 300),
   });

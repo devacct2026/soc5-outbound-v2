@@ -32,6 +32,19 @@ const routes = [
   ["integrations/intraday/sync", { POST: "intradaySyncHandler" }, [], "@/server/intraday-sync"],
   ["integrations/clusters/sync", { POST: "clusterSyncHandler" }, [], "@/server/cluster-sync"],
   ["presence/heartbeat", { POST: "heartbeatHandler" }],
+  ["auth/status", { GET: "accountStatusHandler" }, [], "@/server/auth/handlers"],
+  ["auth/backroom/login", { POST: "backroomLoginHandler" }, [], "@/server/auth/handlers"],
+  ["auth/otp/request", { POST: "otpRequestHandler" }, [], "@/server/auth/handlers"],
+  ["auth/otp/verify", { POST: "otpVerifyHandler" }, [], "@/server/auth/handlers"],
+  ["auth/google/start", { GET: "googleStartHandler" }, [], "@/server/auth/handlers"],
+  ["auth/seatalk/config", { GET: "seatalkConfigHandler" }, [], "@/server/auth/handlers"],
+  ["auth/seatalk/callback", { GET: "seatalkCallbackHandler" }, [], "@/server/auth/handlers"],
+  ["auth/password-changed", { POST: "passwordChangedHandler" }, [], "@/server/auth/handlers"],
+  ["access-requests", { POST: "accessRequestHandler" }, [], "@/server/auth/handlers"],
+  ["users", { GET: "listUsersHandler", POST: "createUserHandler" }, [], "@/server/auth/handlers"],
+  ["users/[id]", { PUT: "updateUserHandler" }, ["id"], "@/server/auth/handlers"],
+  ["users/[id]/disable", { PATCH: "disableUserHandler" }, ["id"], "@/server/auth/handlers"],
+  ["users/[id]/reset-password", { POST: "resetPasswordHandler" }, ["id"], "@/server/auth/handlers"],
 ];
 
 // Remove the superseded static route: `reject` is now an alias in [action].

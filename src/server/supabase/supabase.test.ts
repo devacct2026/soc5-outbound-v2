@@ -57,7 +57,7 @@ test("authenticator: anon key for token validation, service key only for profile
     return { actor, calls: s.calls };
   };
   const ok = await run(200, profile("ACTIVE"));
-  assert.deepEqual(ok.actor, { id: "u1", role: "fte_ops", active: true, isAdmin: true, reportingPermission: true });
+  assert.deepEqual(ok.actor, { id: "u1", role: "fte_ops", active: true, isAdmin: true, reportingPermission: true, mustChangePassword: false });
   const userCall = ok.calls.find((c) => c.url.includes("/auth/v1/user"))!;
   assert.equal(userCall.headers.apikey, ANON);
   assert.ok(!JSON.stringify(userCall).includes("SECRET"), "service key never sent to the auth endpoint");

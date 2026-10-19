@@ -134,11 +134,10 @@ function classify(status: number): ProviderCategory {
   return "VALIDATION";
 }
 
-export function createSeaTalkProvider(
-  cfg: SeaTalkConfig,
-  fetchImpl: typeof fetch = fetch,
-  now: () => Date = () => new Date(),
-): ApprovalProvider {
+type Authed = (method: "GET" | "POST", path: string, opts: { body?: unknown; query?: Record<string, string> }) => Promise<Record<string, unknown>>;
+
+/** Shared HTTP core: app access token (cached, one transparent refresh on 401), timeouts, error classification. */
+function makeAuthedCaller(cfg: SeaTalkConfig, fetchImpl: typeof fetch, now: () => Date): Authed {
   const base = cfg.baseUrl.replace(/\/$/, "");
   let cached: { token: string; until: number } | null = null;
 
@@ -183,8 +182,7 @@ export function createSeaTalkProvider(
     return t;
   }
 
-  /** One transparent token refresh on 401, then surface the error. */
-  async function authed(method: "GET" | "POST", path: string, opts: { body?: unknown; query?: Record<string, string> }) {
+  return async (method, path, opts) => {
     try {
       return await call(method, path, { ...opts, token: await token() });
     } catch (e) {
@@ -194,8 +192,15 @@ export function createSeaTalkProvider(
       }
       throw e;
     }
-  }
+  };
+}
 
+export function createSeaTalkProvider(
+  cfg: SeaTalkConfig,
+  fetchImpl: typeof fetch = fetch,
+  now: () => Date = () => new Date(),
+): ApprovalProvider {
+  const authed = makeAuthedCaller(cfg, fetchImpl, now);
   return {
     async createItem(input) {
       await authed("POST", cfg.createPath, { body: buildCreateBody(input) });
@@ -225,6 +230,30 @@ export function createSeaTalkProvider(
         rejected: list(item.rejected_list),
         comments,
       };
+    },
+  };
+}
+
+// ----------------------------------------------------------- Login with SeaTalk (OFFICIAL contract)
+export interface SeaTalkEmployee {
+  employeeCode: string;
+  name: string;
+  email: string;
+}
+export interface SeaTalkLogin {
+  /** GET {base}/open_login/code2employee?code=  (vendored official page: verify_login_with_seatalk_code.md). */
+  codeToEmployee(code: string): Promise<SeaTalkEmployee>;
+}
+export function createSeaTalkLogin(cfg: SeaTalkConfig, fetchImpl: typeof fetch = fetch, now: () => Date = () => new Date()): SeaTalkLogin {
+  const authed = makeAuthedCaller(cfg, fetchImpl, now);
+  return {
+    async codeToEmployee(code) {
+      const r = await authed("GET", "/open_login/code2employee", { query: { code } });
+      const e = r.employee as { employee_code?: unknown; name?: unknown; email?: unknown } | undefined;
+      if (!e || typeof e.employee_code !== "string" || !e.employee_code || typeof e.email !== "string") {
+        throw new SeaTalkProviderError("VALIDATION", "employee missing in response");
+      }
+      return { employeeCode: e.employee_code, name: typeof e.name === "string" ? e.name : "", email: e.email.trim().toLowerCase() };
     },
   };
 }

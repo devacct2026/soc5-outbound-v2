@@ -62,6 +62,8 @@ async function authed(
   const actor = await backend.authenticate(request);
   if (!actor || !actor.active) return err("UNAUTHENTICATED");
   if (backend.actorLimiter && !backend.actorLimiter.allow(`actor:${actor.id}`)) return err("RATE_LIMITED");
+  // A pending forced password change blocks everything except reading who you are and changing the password.
+  if (actor.mustChangePassword && !/\/auth\/(me|status)$/.test(new URL(request.url).pathname)) return err("PASSWORD_CHANGE_REQUIRED");
   return { backend, actor };
 }
 
@@ -544,8 +546,8 @@ export const markAllReadHandler: Handler = (backend, request) => markReadHandler
 export const meHandler: Handler = async (backend, request) => {
   const a = await authed(backend, request);
   if (a instanceof Response) return a;
-  const { id, role, isAdmin: admin, reportingPermission } = a.actor;
-  return json(200, { id, role, is_admin: !!admin, reporting_permission: !!reportingPermission });
+  const { id, role, isAdmin: admin, reportingPermission, mustChangePassword } = a.actor;
+  return json(200, { id, role, is_admin: !!admin, reporting_permission: !!reportingPermission, must_change_password: !!mustChangePassword });
 };
 
 /** POST /api/v1/presence/heartbeat (SEA-6): FTE Ops presence for round-robin routing. No idempotency key: a repeat is harmless. */

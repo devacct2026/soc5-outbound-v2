@@ -135,3 +135,10 @@ select pg_temp.ok((select ops_fte = 'Olive Ops' and mm_fte = 'Mike MM' and doc_o
   and lh_type_request = 'WETLEASE' and truck_type = 'DRYLEASE' and assigned_time is not null
   from sheet_export_rows(100000) where request_id = '80000000-0000-0000-0000-000000000001'), 'attribution: last event of each type wins, names resolved server-side');
 select pg_temp.ok((select request_id from sheet_export_rows(1)) = (select id from requests order by request_timestamp asc, id asc limit 1), 'ordered by request time ascending');
+
+-- FTE-run backroom disable
+select pg_temp.ok(fte_disable_backroom_user('30000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-0000000000b1')->>'ok' = 'true', 'FTE can disable a backroom account');
+select pg_temp.ok(fte_disable_backroom_user('30000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-0000000000b1')->>'code' = 'NOT_FOUND', 'already disabled');
+select pg_temp.ok(fte_disable_backroom_user('00000000-0000-0000-0000-0000000000b2','00000000-0000-0000-0000-0000000000b1')->>'code' = 'NOT_FOUND', 'FTE accounts are not disable-able this way');
+select pg_temp.ok(fte_disable_backroom_user('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000b1')->>'code' = 'SELF_CHANGE', 'no self disable');
+select pg_temp.ok((select count(*) = 1 from audit_events where event_type = 'USER_DISABLED' and subject_id = '30000000-0000-0000-0000-000000000004'), 'disable audited');

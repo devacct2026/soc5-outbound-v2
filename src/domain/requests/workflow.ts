@@ -31,6 +31,8 @@ export interface Actor {
   isAdmin?: boolean;
   /** Explicit reporting permission, independent of role (KPI-6). */
   reportingPermission?: boolean;
+  /** Forced password change pending (backroom accounts after creation/reset): only the change endpoint is usable. */
+  mustChangePassword?: boolean;
 }
 
 export interface WorkflowRequest {
