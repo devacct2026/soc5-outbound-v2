@@ -31,6 +31,9 @@ export const ERROR_STATUS: Record<string, number> = {
   BAD_REQUEST: 400,
   APPROVAL_PROVIDER_DISABLED: 503,
   BACKEND_NOT_CONFIGURED: 503,
+  RATE_LIMITED: 429,
+  RANGE_TOO_LARGE: 422,
+  PAYLOAD_TOO_LARGE: 413,
 };
 
 export const errorResponse = (code: string, details?: unknown): StoredResponse => ({

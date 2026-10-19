@@ -7,7 +7,7 @@
 | Business decision coverage | **Complete for planning: 46/46** | Policies are recorded in [09-business-decisions.md](./09-business-decisions.md). This is not formal company authorization or evidence of implementation. |
 | APR-3 FTE Ops-created rejection | **Approved: final, no route** | Rejection is final; no correction recipient, return role, or resubmission path. |
 | APR-3 design closure | **Specified** | Final outcome, role boundary, state, queue exclusion, notification, audit, and persistence semantics are specified in this document and backend design references. |
-| Runtime technical verification | **Blocked: backend absent** | This checkout contains the dashboard prototype and documentation, but no request API/service, database migrations, or backend workflow tests. Persistence, transitions, authorization, queues, notifications, and audit behavior cannot be executed or verified here. |
+| Runtime technical verification | **Partially verified (local only)** | Backend, migrations and tests now exist and pass against disposable local resources (see [`../implementation-progress.md`](../implementation-progress.md)). Nothing was verified against a live Supabase project, SeaTalk sandbox or Google account, and no checklist box below is ticked without evidence recorded there. |
 | Production configuration | **Open** | Production routing, retry/recovery, retention, security, and reporting values require validation and approval. |
 | Implementation / deployment readiness | **Blocked** | Do not treat decision approval as implementation acceptance or production authorization. |
 

@@ -18,6 +18,30 @@ create trigger audit_events_no_truncate
   before truncate on audit_events
   for each statement execute function request_events_block_truncate();
 
+-- Terminal-row guard (defence in depth behind the TypeScript domain rules):
+--  * FINAL_NO_ROUTE rejections can never be edited, resubmitted or reactivated (APR-3);
+--  * LEGACY_UNRESOLVED rows change only inside an explicit reconciliation session
+--    (set_config('soc5.legacy_resolution','on',true)), never through the workflow;
+--  * CANCELLED is terminal.
+create or replace function private.requests_terminal_guard() returns trigger
+language plpgsql as $fn$
+begin
+  if old.rejection_disposition = 'FINAL_NO_ROUTE' then
+    raise exception 'FINAL_NO_ROUTE requests are immutable' using errcode = '23514';
+  end if;
+  if old.rejection_disposition = 'LEGACY_UNRESOLVED'
+     and coalesce(current_setting('soc5.legacy_resolution', true), '') <> 'on' then
+    raise exception 'LEGACY_UNRESOLVED requests require manual reconciliation' using errcode = '23514';
+  end if;
+  if old.status = 'CANCELLED' then
+    raise exception 'CANCELLED requests are immutable' using errcode = '23514';
+  end if;
+  return new;
+end
+$fn$;
+create trigger requests_terminal_guard before update on requests
+  for each row execute function private.requests_terminal_guard();
+
 -- ---------------------------------------------------------- commit_transition
 create or replace function commit_transition(
   p_request jsonb,
@@ -32,6 +56,7 @@ declare
   n requests;
   cur requests;
   result requests;
+  v_idem_rows integer;
 begin
   n := jsonb_populate_record(null::requests, p_request);
 
@@ -87,9 +112,19 @@ begin
   on conflict (idempotency_key) do nothing;
 
   if p_idem is not null then
+    -- An EXPIRED key (>24h, OPS-4) is recycled; a live one means a concurrent identical
+    -- request already committed: abort this whole transaction so the caller replays it.
     insert into idempotency_keys (actor_id, method, path, key, payload_hash, response_status, response_body)
     values ((p_idem->>'actor_id')::uuid, p_idem->>'method', p_idem->>'path', p_idem->>'key',
-            p_idem->>'payload_hash', (p_idem->>'response_status')::integer, p_idem->'response_body');
+            p_idem->>'payload_hash', (p_idem->>'response_status')::integer, p_idem->'response_body')
+    on conflict (actor_id, method, path, key) do update set
+      payload_hash = excluded.payload_hash, response_status = excluded.response_status,
+      response_body = excluded.response_body, created_at = now(), expires_at = now() + interval '24 hours'
+    where idempotency_keys.expires_at < now();
+    get diagnostics v_idem_rows = row_count;
+    if v_idem_rows = 0 then
+      raise exception 'idempotency key in use' using errcode = '23505';
+    end if;
   end if;
 
   return jsonb_build_object('ok', true, 'request', to_jsonb(result));
@@ -276,8 +311,15 @@ begin
   if coalesce(btrim(p_reason), '') = '' then
     return jsonb_build_object('ok', false, 'code', 'REASON_REQUIRED');
   end if;
-  update profiles set account_status = 'DISABLED', updated_at = now() where id = p_user;
-  if not found then return jsonb_build_object('ok', false, 'code', 'NOT_FOUND'); end if;
+  -- No self-lockout and never disable the last active administrator (break-glass remains a DB-owner action).
+  if p_user = p_actor then
+    return jsonb_build_object('ok', false, 'code', 'INVALID_STATE');
+  end if;
+  update profiles set account_status = 'DISABLED', updated_at = now() where id = p_user
+    and (not is_admin or exists (select 1 from profiles o where o.is_admin and o.account_status = 'ACTIVE' and o.id <> p_user));
+  if not found then
+    return jsonb_build_object('ok', false, 'code', case when exists (select 1 from profiles where id = p_user) then 'INVALID_STATE' else 'NOT_FOUND' end);
+  end if;
   insert into audit_events (event_type, actor_id, subject_type, subject_id, reason)
   values ('ACCOUNT_DISABLED', p_actor, 'profile', p_user::text, p_reason);
   return jsonb_build_object('ok', true);

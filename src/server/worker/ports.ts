@@ -31,22 +31,26 @@ export class MemoryOutboxPort implements OutboxPort {
       };
     });
   }
-  private row(id: string) {
+  /** The row only if this claim still owns it (PROCESSING with the same attempt counter). */
+  private owned(id: string, claimAttempt: number) {
     const o = this.store.outbox.find((x) => x.id === id);
-    if (!o) throw new Error("unknown outbox row");
-    return o;
+    return o && o.status === "PROCESSING" && o.attempts === claimAttempt ? o : null;
   }
-  async complete(id: string) {
-    this.row(id).status = "COMPLETED";
+  async complete(id: string, claimAttempt: number, acknowledged = false) {
+    void acknowledged; // memory port does not track provider acknowledgment
+    const o = this.owned(id, claimAttempt);
+    if (o) o.status = "COMPLETED";
   }
-  async retryLater(id: string, availableAt: Date, error: string) {
-    const o = this.row(id);
+  async retryLater(id: string, claimAttempt: number, availableAt: Date, error: string) {
+    const o = this.owned(id, claimAttempt);
+    if (!o) return;
     o.status = "PENDING";
     o.availableAt = availableAt.getTime();
     o.lastError = error;
   }
-  async deadLetter(id: string, error: string) {
-    const o = this.row(id);
+  async deadLetter(id: string, claimAttempt: number, error: string) {
+    const o = this.owned(id, claimAttempt);
+    if (!o) return;
     o.status = "DEAD_LETTER";
     o.lastError = error;
   }
@@ -84,20 +88,20 @@ export class SupabaseOutboxPort implements OutboxPort {
       maxAttempts: Number(r.max_attempts),
     }));
   }
-  async complete(id: string, acknowledged: boolean) {
+  async complete(id: string, claimAttempt: number, acknowledged: boolean) {
     const now = new Date().toISOString();
-    await this.rest.patch("workflow_outbox", `id=eq.${id}`, {
+    await this.rest.patch("workflow_outbox", `id=eq.${id}&status=eq.PROCESSING&attempts=eq.${claimAttempt}`, {
       status: "COMPLETED", completed_at: now, locked_at: null, last_error: null,
       ...(acknowledged ? { provider_ack_at: now } : {}),
     });
   }
-  async retryLater(id: string, availableAt: Date, error: string) {
-    await this.rest.patch("workflow_outbox", `id=eq.${id}`, {
+  async retryLater(id: string, claimAttempt: number, availableAt: Date, error: string) {
+    await this.rest.patch("workflow_outbox", `id=eq.${id}&status=eq.PROCESSING&attempts=eq.${claimAttempt}`, {
       status: "PENDING", available_at: availableAt.toISOString(), locked_at: null, last_error: error,
     });
   }
-  async deadLetter(id: string, error: string) {
-    await this.rest.patch("workflow_outbox", `id=eq.${id}`, {
+  async deadLetter(id: string, claimAttempt: number, error: string) {
+    await this.rest.patch("workflow_outbox", `id=eq.${id}&status=eq.PROCESSING&attempts=eq.${claimAttempt}`, {
       status: "DEAD_LETTER", dead_lettered_at: new Date().toISOString(), locked_at: null, last_error: error,
     });
   }

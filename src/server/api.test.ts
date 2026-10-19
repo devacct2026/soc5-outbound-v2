@@ -352,3 +352,69 @@ test("malformed JSON and unknown routes are handled safely", async () => {
   assert.equal((await act(backend, "ops1", id, "teleport")).status, 404);
   assert.equal((await act(backend, "ops1", "not-a-uuid", "approve")).status, 404);
 });
+
+test("rate limiting: per-address throttle before auth, per-actor throttle after; fails closed under key flooding", async () => {
+  const { createRateLimiter } = await import("./rate-limit.ts");
+  let t = 0;
+  const lim = createRateLimiter({ limit: 3, windowMs: 1000, now: () => t, maxKeys: 2 });
+  assert.deepEqual([1, 2, 3, 4].map(() => lim.allow("a")), [true, true, true, false]);
+  t = 1000;
+  assert.equal(lim.allow("a"), true, "window resets");
+  assert.equal(lim.allow("b"), true);
+  assert.equal(lim.allow("c"), false, "key-space flooding fails closed");
+  const { backend } = setup({ anonLimiter: createRateLimiter({ limit: 2, windowMs: 60_000 }), actorLimiter: createRateLimiter({ limit: 3, windowMs: 60_000 }) });
+  const codes: number[] = [];
+  for (let i = 0; i < 4; i++) codes.push((await call(backend, queueHandler, "pic1", "GET", "/q")).status);
+  assert.deepEqual(codes, [200, 200, 429, 429], "address budget (2) is enforced before authentication");
+  const other = setup({ actorLimiter: createRateLimiter({ limit: 2, windowMs: 60_000 }) }).backend;
+  const c2: number[] = [];
+  for (let i = 0; i < 3; i++) c2.push((await call(other, queueHandler, "ops1", "GET", "/q")).status);
+  assert.deepEqual(c2, [200, 200, 429]);
+  assert.equal((await call(other, queueHandler, "doc1", "GET", "/q")).status, 200, "budgets are per actor");
+});
+
+// ---------------------------------------------------------------- review regressions
+test("regression: repeated events inside one approval version still notify (dedupe is per command)", async () => {
+  const { backend, store } = setup();
+  const { id } = await create(backend, "pic1");
+  const before = store.notificationLog.length;
+  await call(backend, updateRequestHandler, "ops1", "PUT", `/r/${id}`, { ...good, backlogs: 10 }, { id });
+  await call(backend, updateRequestHandler, "ops1", "PUT", `/r/${id}`, { ...good, backlogs: 11 }, { id });
+  const edits = store.notificationLog.slice(before).filter((n) => n.event === "REQUEST_UPDATED" && n.recipientUserId === "pic1");
+  assert.equal(edits.length, 2, "second edit within the same approval version is not silently dropped");
+  // ...while a retry of the SAME command (same idempotency key) is still not duplicated
+  const key = { "idempotency-key": "edit-retry-001" };
+  await call(backend, updateRequestHandler, "ops1", "PUT", `/r/${id}`, { ...good, backlogs: 12 }, { id }, key);
+  const n1 = store.notificationLog.length;
+  await call(backend, updateRequestHandler, "ops1", "PUT", `/r/${id}`, { ...good, backlogs: 12 }, { id }, key);
+  assert.equal(store.notificationLog.length, n1);
+});
+
+test("regression: approve never reveals existence to an Ops PIC who cannot see the request", async () => {
+  const { backend } = setup();
+  const { id } = await create(backend, "pic1");
+  const missing = await act(backend, "pic2", "11111111-1111-1111-1111-111111111111", "approve");
+  const hidden = await act(backend, "pic2", id, "approve");
+  assert.equal(missing.status, hidden.status);
+  assert.equal(hidden.status, 404);
+});
+
+test("regression: bad filters are 422 (never 500); reporting range is bounded; override role is validated", async () => {
+  const { backend } = setup();
+  for (const q of ["status=nope", "search=a,b)", "search=%25", "date_from=garbage", "date_to=2026-13-40"]) {
+    assert.equal((await call(backend, listHandler, "ops1", "GET", `/l?${q}`)).status, 422, q);
+    assert.equal((await call(backend, metricsHandler, "ops1", "GET", `/m?${q}`)).status, 422, q);
+  }
+  assert.equal((await call(backend, clustersHandler, "ops1", "GET", "/c?search=abc,def)")).status, 422);
+  assert.equal((await call(backend, kpiSummaryHandler, "rep1", "GET", "/k?date_from=2020-01-01&date_to=2026-01-01")).status, 422, "bounded range");
+  const { id } = await create(backend);
+  assert.equal((await act(backend, "adm1", id, "approve", {}, { "x-admin-override": "reason", "x-override-role": "root" })).status, 422);
+});
+
+test("regression: oversized JSON bodies are refused with 413 before parsing", async () => {
+  const { backend } = setup();
+  const res = await createRequestHandler(backend, new Request("http://t/x", {
+    method: "POST", headers: { authorization: "Bearer pic1", "idempotency-key": "big-body-0001" }, body: JSON.stringify({ cluster: "x".repeat(300_000) }),
+  }));
+  assert.equal(res.status, 413);
+});

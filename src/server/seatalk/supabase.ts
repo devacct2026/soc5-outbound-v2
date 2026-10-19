@@ -2,7 +2,7 @@
 // (provider+event_id, or provider+fallback_hash when the provider sent no id).
 import type { Actor, Role } from "../../domain/requests/workflow.ts";
 import { Rest, RestError, q } from "../supabase/rest.ts";
-import type { ApprovalStore, AssignmentInfo, RecordResult } from "./contract.ts";
+import { TERMINAL_CALLBACK_STATUSES, type ApprovalStore, type AssignmentInfo, type RecordResult } from "./contract.ts";
 
 export class SupabaseApprovalStore implements ApprovalStore {
   private rest: Rest;
@@ -32,7 +32,10 @@ export class SupabaseApprovalStore implements ApprovalStore {
     const rows = await this.rest.select("seatalk_callback_events", `provider=eq.${q(e.provider)}&${where}&limit=1`);
     const prior = rows[0];
     if (!prior) throw new Error("callback dedupe row vanished");
-    return prior.payload_hash === e.payloadHash ? { kind: "DUPLICATE", status: String(prior.status) } : { kind: "CONFLICT" };
+    if (prior.payload_hash !== e.payloadHash) return { kind: "CONFLICT" };
+    if (TERMINAL_CALLBACK_STATUSES.includes(String(prior.status))) return { kind: "DUPLICATE", status: String(prior.status) };
+    await this.rest.patch("seatalk_callback_events", `id=eq.${q(String(prior.id))}`, { status: "RECEIVED" });
+    return { kind: "RETRY", id: String(prior.id) };
   }
 
   async finishCallback(id: string, status: "PROCESSED" | "IGNORED" | "FAILED", reason?: string) {

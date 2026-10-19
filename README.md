@@ -33,7 +33,21 @@ npm run build
 
 The Playwright suite starts the local Next.js development server and exercises route navigation,
 dashboard filters, themes, keyboard interactions, and responsive layouts at desktop, tablet, and
-mobile widths. The operational modules use local mock data and do not connect to a backend.
+mobile widths. The dashboard pages still render local mock data; the backend below is not yet wired
+into the UI (see `docs/implementation-progress.md`).
+
+## Backend (API, database, worker)
+
+- `/api/v1/*` Route Handlers are thin wrappers over `src/server/api.ts`; domain rules live in
+  `src/domain/` (pure, no I/O) and persistence in `src/server/store.ts` (memory + Supabase adapters).
+- Schema, RLS and transactional functions: `supabase/migrations/`. Replay them on a throw-away
+  PostgreSQL and run the constraint/RLS/audit/worker tests with `npm run test:db`
+  (needs `initdb`/`pg_ctl`/`psql`; set `PG_BIN` if they are not on `PATH`).
+- Unit/integration tests: `npm run test:unit`. Background worker: `npm run worker -- --once`.
+- Configuration: copy `.env.example` to `.env.local`. v2 reads only `SOC5_*` variables and
+  deliberately ignores the legacy `SUPABASE_*` names. Use a local or disposable Supabase project.
+- SeaTalk approval, SeaTalk alerts and Google Sheets are **disabled by default** and must stay
+  disabled until `docs/backend/10-implementation-readiness.md` gates are met.
 
 ## Learn More
 

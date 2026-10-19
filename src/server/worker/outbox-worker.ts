@@ -50,9 +50,14 @@ export interface OutboxStats {
 
 export interface OutboxPort {
   claim(channels: Channel[], limit: number, lockTimeoutSeconds: number): Promise<OutboxRow[]>;
-  complete(id: string, acknowledged: boolean): Promise<void>;
-  retryLater(id: string, availableAt: Date, error: string): Promise<void>;
-  deadLetter(id: string, error: string): Promise<void>;
+  /**
+   * Status updates are guarded by the claim: `attempts` is the claim token (each claim
+   * increments it), so a slow worker whose lock was reclaimed cannot overwrite the new
+   * owner's outcome. A stale update is a silent no-op.
+   */
+  complete(id: string, claimAttempt: number, acknowledged: boolean): Promise<void>;
+  retryLater(id: string, claimAttempt: number, availableAt: Date, error: string): Promise<void>;
+  deadLetter(id: string, claimAttempt: number, error: string): Promise<void>;
   stats(now: Date): Promise<OutboxStats>;
 }
 
@@ -97,16 +102,16 @@ export async function runWorkerOnce(opts: {
     try {
       if (!handler) throw new Error(`no handler for ${row.channel}`);
       const res = await handler(row);
-      await opts.port.complete(row.id, res.acknowledged);
+      await opts.port.complete(row.id, row.attempts, res.acknowledged);
       out.completed++;
     } catch (e) {
       const error = redactError(e);
       if (row.attempts >= row.maxAttempts) {
-        await opts.port.deadLetter(row.id, error);
+        await opts.port.deadLetter(row.id, row.attempts, error);
         out.deadLettered++;
       } else {
         const delay = backoffSeconds(row.attempts, cfg.baseSeconds, cfg.maxSeconds);
-        await opts.port.retryLater(row.id, new Date(opts.now.getTime() + delay * 1000), error);
+        await opts.port.retryLater(row.id, row.attempts, new Date(opts.now.getTime() + delay * 1000), error);
         out.retried++;
       }
     }

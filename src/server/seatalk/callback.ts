@@ -5,7 +5,9 @@ import { fail } from "../../domain/requests/workflow.ts";
 import type { Backend } from "../backend.ts";
 import { runCommand } from "../commands.ts";
 import { json } from "../api.ts";
+import { readBodyLimited } from "../http-body.ts";
 import {
+  sha256,
   callbackFingerprint,
   parseCallback,
   tokenMatches,
@@ -30,8 +32,8 @@ export async function seatalkDecisionHandler(
   const wiring = backend.seatalk;
   if (!backend.features.seatalkApproval || !wiring) return json(503, { error: "SEATALK_DISABLED" });
 
-  const raw = await request.text();
-  if (raw.length > 64 * 1024) return json(413, { error: "PAYLOAD_TOO_LARGE" });
+  const raw = await readBodyLimited(request, 64 * 1024);
+  if (raw === null) return json(413, { error: "PAYLOAD_TOO_LARGE" });
   const sig = verifyCallbackSignature(wiring.signature, request.headers, raw, backend.now());
   if (!sig.ok) return json(401, { error: "INVALID_SIGNATURE" }); // nothing is recorded or processed
 
@@ -42,7 +44,9 @@ export async function seatalkDecisionHandler(
   // SEA-4: provider-scoped event id; content fingerprint only when absent.
   const fallbackHash = cb.eventId
     ? null
-    : callbackFingerprint(JSON.stringify({ i: cb.itemId, e: cb.employeeCode, a: action, r: cb.reason }));
+    : // The token hash is part of the fingerprint so a forged callback with a bad token can
+      // never consume the identity of the legitimate one.
+      callbackFingerprint(JSON.stringify({ i: cb.itemId, e: cb.employeeCode, a: action, r: cb.reason, t: sha256(cb.token) }));
   const rec = await wiring.approvals.recordCallback({
     provider: "seatalk",
     eventId: cb.eventId,
@@ -51,7 +55,7 @@ export async function seatalkDecisionHandler(
     employeeCode: cb.employeeCode,
     action,
   });
-  if (rec.kind === "DUPLICATE") return ack(); // exact duplicate: acknowledged, never re-run
+  if (rec.kind === "DUPLICATE") return ack(); // terminal outcome exists: acknowledged, never re-run
   if (rec.kind === "CONFLICT") return json(409, { error: "CALLBACK_CONFLICT" });
 
   const finish = (s: "PROCESSED" | "IGNORED" | "FAILED", reason?: string) =>
@@ -96,10 +100,16 @@ export async function seatalkDecisionHandler(
     await finish("PROCESSED");
     return ack();
   }
-  if (out.status === 409) {
+  const code = (out.body as { error?: string }).error;
+  if (out.status === 409 && code === "INVALID_STATE") {
     // SEA-5: SOC5 is authoritative; an already-decided request is not overwritten.
     await finish("IGNORED", "REQUEST_ALREADY_DECIDED");
     return ack();
+  }
+  if (code === "VERSION_CONFLICT") {
+    // Transient contention is NOT a decision: fail so the provider redelivers.
+    await finish("FAILED", "VERSION_CONFLICT");
+    return json(503, { error: "RETRY_LATER" });
   }
   await finish("FAILED", String((out.body as { error?: string }).error));
   return json(out.status, out.body);
@@ -111,7 +121,8 @@ export async function seatalkChallengeHandler(
   request: Request,
 ): Promise<Response> {
   if (!backend?.seatalk || !backend.features.seatalkApproval) return json(503, { error: "SEATALK_DISABLED" });
-  const raw = await request.text();
+  const raw = await readBodyLimited(request, 16 * 1024);
+  if (raw === null) return json(413, { error: "PAYLOAD_TOO_LARGE" });
   const sig = verifyCallbackSignature(backend.seatalk.signature, request.headers, raw, backend.now());
   if (!sig.ok) return json(401, { error: "INVALID_SIGNATURE" });
   try {

@@ -118,6 +118,13 @@ export interface Store {
   reportingRows(from: string, to: string): Promise<RequestRecord[]>;
 }
 
+/** Raised when a reporting window exceeds the safe row cap; never silently truncate. */
+export class ReportTooLargeError extends Error {
+  constructor() {
+    super("RANGE_TOO_LARGE");
+  }
+}
+
 /** Retry wrapper shared by adapters: the transaction body is pure and re-runnable. */
 export async function withVersionRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
   for (let i = 0; ; i++) {

@@ -93,6 +93,20 @@ create table requests (
   row_version integer not null default 1,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  -- Canonical status <-> approval_status pairs (ST-8: two distinct fields that must agree).
+  -- Legacy raw statuses are unconstrained here; reconciliation handles them (ST-1..ST-6).
+  constraint requests_status_approval_pair check (
+    case status
+      when 'PENDING' then approval_status = 'PENDING'
+      when 'REROUTED' then approval_status = 'PENDING'
+      when 'REQUESTED' then approval_status = 'APPROVED'
+      when 'DOCKING' then approval_status = 'APPROVED'
+      when 'DOCKED' then approval_status = 'APPROVED'
+      when 'REJECTED' then approval_status = 'REJECTED'
+      when 'CANCELLED' then approval_status = 'CANCELLED'
+      else true
+    end
+  ),
   -- Docking milestones must be internally consistent.
   constraint requests_docked_requires_trip check (status <> 'DOCKED' or (linehaul_trip_no is not null and driver_id is not null)),
   constraint requests_docking_requires_plate check (status not in ('DOCKING', 'DOCKED') or plate_number is not null)
@@ -319,8 +333,12 @@ alter table audit_events enable row level security;
 -- Browser roles never write; backend uses service_role (server-only).
 revoke all on all tables in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;
-grant select on profiles, clusters, requests, request_events, notifications,
+grant select on clusters, requests, request_events, notifications,
   notification_reads, intraday_dispatch to authenticated;
+-- Profiles: column-level grant. Privilege flags (is_admin, reporting_permission),
+-- SeaTalk employee code and presence are NOT readable by browsers; the API exposes
+-- the caller's own flags via /api/v1/auth/me.
+grant select (id, role, full_name, ops_id, account_status) on profiles to authenticated;
 grant insert, update on notification_reads to authenticated;
 
 create policy profiles_read_own on profiles for select to authenticated

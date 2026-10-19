@@ -7,6 +7,7 @@ import type { RequestRecord } from "../../domain/requests/lifecycle.ts";
 import { countsAsAwaitingAction, type Actor, type Role } from "../../domain/requests/workflow.ts";
 import { makeBackend, type Backend } from "../backend.ts";
 import {
+  ReportTooLargeError,
   VersionConflictError,
   withVersionRetry,
   type ClusterView,
@@ -188,10 +189,11 @@ export class SupabaseStore implements Store {
   async metrics(actor: Actor, f: { search?: string; dateFrom?: string; dateTo?: string }): Promise<Metrics> {
     const all: RequestRecord[] = [];
     let cursor: Cursor | null = null;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; ; i++) {
       const p = await this.listRequests(actor, { ...f, limit: 500, cursor });
       all.push(...p.data);
       if (!p.hasMore) break;
+      if (i >= 19) throw new ReportTooLargeError(); // 10k rows: fail loudly, never undercount
       const last = p.data[p.data.length - 1];
       cursor = { ts: last.createdAt, id: last.id };
     }
@@ -285,7 +287,7 @@ export class SupabaseStore implements Store {
     const tz = (await this.schedules()).at(-1)?.timezone ?? DEFAULT_SCHEDULE.timezone;
     const rows: RequestRecord[] = [];
     let cursor: Cursor | null = null;
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; ; i++) {
       const rs = await this.rest.select(
         "requests",
         `request_timestamp=gte.${encodeURIComponent(lo)}&request_timestamp=lt.${encodeURIComponent(hi)}` +
@@ -294,6 +296,7 @@ export class SupabaseStore implements Store {
       const page = pageOf(rs.map(fromRow), 1000);
       rows.push(...page.data);
       if (!page.hasMore) break;
+      if (i >= 99) throw new ReportTooLargeError(); // 100k rows: fail loudly, never undercount
       const last = page.data[page.data.length - 1];
       cursor = { ts: last.createdAt, id: last.id };
     }
@@ -361,6 +364,8 @@ export interface SupabaseBackendOptions {
   features?: Backend["features"];
   seatalkSecret?: string;
   seatalkMaxSkewSeconds?: number;
+  actorLimiter?: Backend["actorLimiter"];
+  anonLimiter?: Backend["anonLimiter"];
 }
 
 export function createSupabaseBackend(cfg: SupabaseConfig, opts: SupabaseBackendOptions = {}): Backend {
@@ -370,6 +375,8 @@ export function createSupabaseBackend(cfg: SupabaseConfig, opts: SupabaseBackend
     authenticate: makeAuthenticator(cfg, rest),
     admin: new SupabaseAdmin(rest),
     ...(opts.features ? { features: opts.features } : {}),
+    ...(opts.actorLimiter ? { actorLimiter: opts.actorLimiter } : {}),
+    ...(opts.anonLimiter ? { anonLimiter: opts.anonLimiter } : {}),
     ...(opts.seatalkSecret
       ? { seatalk: { signature: { secret: opts.seatalkSecret, maxSkewSeconds: opts.seatalkMaxSkewSeconds ?? 300 }, approvals: new SupabaseApprovalStore(rest) } }
       : {}),

@@ -220,12 +220,14 @@ test("legacy SUPABASE_* env names are ignored: v2 never connects to the original
     process.env.SUPABASE_URL = "https://legacy.example";
     process.env.SUPABASE_ANON_KEY = "legacy-anon";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "legacy-service";
-    const fresh1 = (await import("../backend.ts?legacy-only")) as typeof import("../backend.ts");
+    const spec1 = "../backend.ts?legacy-only"; // distinct module instance (getBackend caches)
+    const fresh1 = (await import(spec1)) as typeof import("../backend.ts");
     assert.equal(await fresh1.getBackend(), null);
     process.env.SOC5_SUPABASE_URL = "https://v2.example";
     process.env.SOC5_SUPABASE_ANON_KEY = "v2-anon";
     process.env.SOC5_SUPABASE_SERVICE_ROLE_KEY = "v2-service";
-    const fresh2 = (await import("../backend.ts?v2-names")) as typeof import("../backend.ts");
+    const spec2 = "../backend.ts?v2-names";
+    const fresh2 = (await import(spec2)) as typeof import("../backend.ts");
     assert.notEqual(await fresh2.getBackend(), null);
   } finally {
     for (const k of keys) {

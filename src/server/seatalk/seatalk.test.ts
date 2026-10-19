@@ -101,7 +101,10 @@ test("duplicates (SEA-4): exact duplicate acknowledged without reprocessing; sam
 test("provider-scoped: same event id from a different provider is not a duplicate", async () => {
   const approvals = new MemoryApprovalStore();
   const base = { eventId: "e1", fallbackHash: null, payloadHash: "h", employeeCode: "E", action: "approve" };
-  assert.equal((await approvals.recordCallback({ ...base, provider: "seatalk" })).kind, "NEW");
+  const first = await approvals.recordCallback({ ...base, provider: "seatalk" });
+  assert.equal(first.kind, "NEW");
+  assert.equal((await approvals.recordCallback({ ...base, provider: "seatalk" })).kind, "RETRY", "unfinished callbacks are reprocessed, not acknowledged");
+  await approvals.finishCallback((first as { id: string }).id, "PROCESSED");
   assert.equal((await approvals.recordCallback({ ...base, provider: "other" })).kind, "NEW");
   assert.equal((await approvals.recordCallback({ ...base, provider: "seatalk" })).kind, "DUPLICATE");
 });
@@ -153,4 +156,62 @@ test("challenge endpoint echoes only after signature verification", async () => 
   assert.deepEqual(await ok.json(), { seatalk_challenge: "abc123" });
   const bad = await seatalkChallengeHandler(s.backend, new Request("http://t", { method: "POST", body: raw, headers: { "x-timestamp": t, "x-signature": "0".repeat(64) } }));
   assert.equal(bad.status, 401);
+});
+
+test("retry semantics: failed or crashed callbacks are reprocessed on redelivery; only terminal outcomes are deduplicated", async () => {
+  // Callback arrives before the assignment exists -> 404 now, success on the provider's retry.
+  const s = await setup();
+  const saved = s.approvals.assignments.get(s.assignmentId)!;
+  s.approvals.assignments.delete(s.assignmentId);
+  assert.equal((await post(s.backend, "approve", body({ event_id: "late-1" }))).status, 404);
+  s.approvals.assignments.set(s.assignmentId, saved);
+  const retry = await post(s.backend, "approve", body({ event_id: "late-1" }));
+  assert.equal(retry.status, 200);
+  assert.equal(s.store.requests.get(s.reqId)?.status, "REQUESTED", "approval not lost");
+  assert.equal(s.approvals.callbacks.filter((c) => c.status === "PROCESSED").length, 1);
+  assert.equal(s.store.eventLog.filter((e) => e.type === "REQUEST_APPROVED").length, 1);
+  // A crash after recording (status stuck at RECEIVED) is reprocessed too.
+  const s2 = await setup();
+  const { callbackFingerprint } = await import("./contract.ts");
+  await s2.approvals.recordCallback({ provider: "seatalk", eventId: "crash-1", fallbackHash: null, payloadHash: callbackFingerprint(JSON.stringify(body({ event_id: "crash-1" }))), employeeCode: "E100", action: "approve" });
+  assert.equal((await post(s2.backend, "approve", body({ event_id: "crash-1" }))).status, 200);
+  assert.equal(s2.store.requests.get(s2.reqId)?.status, "REQUESTED");
+});
+
+test("a forged callback with a bad token cannot consume the legitimate callback identity (no event id)", async () => {
+  const s = await setup();
+  const noId = { item_id: "item-1", employee: { employee_code: "E100" } };
+  assert.equal((await post(s.backend, "approve", { ...noId, token: "wrong-token-xyz" })).status, 403);
+  assert.equal((await post(s.backend, "approve", { ...noId, token: "good-token-123" })).status, 200);
+  assert.equal(s.store.requests.get(s.reqId)?.status, "REQUESTED");
+});
+
+test("transient VERSION_CONFLICT is not swallowed as a decision: provider gets a retryable error", async () => {
+  const s = await setup();
+  const original = s.store.transaction.bind(s.store);
+  const { VersionConflictError } = await import("../store.ts");
+  s.store.transaction = (async () => {
+    throw new VersionConflictError();
+  }) as never;
+  const res = await post(s.backend, "approve", body({ event_id: "vc-1" }));
+  assert.equal(res.status, 503);
+  assert.equal((await res.json()).error, "RETRY_LATER");
+  assert.equal(s.approvals.callbacks[0].status, "FAILED");
+  s.store.transaction = original;
+  assert.equal((await post(s.backend, "approve", body({ event_id: "vc-1" }))).status, 200);
+  assert.equal(s.store.requests.get(s.reqId)?.status, "REQUESTED");
+});
+
+test("bounded bodies and fail-closed skew configuration", async () => {
+  const s = await setup();
+  const big = "x".repeat(70 * 1024);
+  const t = ts();
+  const res = await seatalkDecisionHandler(s.backend, new Request("http://t", { method: "POST", body: big, headers: { "x-timestamp": t, "x-signature": signCallback(SECRET, t, big) } }), "approve");
+  assert.equal(res.status, 413);
+  const lying = await seatalkDecisionHandler(s.backend, new Request("http://t", { method: "POST", body: "{}", headers: { "content-length": "999999" } }), "approve");
+  assert.equal(lying.status, 413);
+  for (const bad of [Number.NaN, 0, -5]) {
+    const out = verifyCallbackSignature({ secret: SECRET, maxSkewSeconds: bad }, new Headers({ "x-timestamp": t, "x-signature": signCallback(SECRET, t, "{}") }), "{}", NOW);
+    assert.equal(out.ok, false, `skew ${bad} must fail closed`);
+  }
 });

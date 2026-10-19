@@ -6,6 +6,7 @@ import { DEFAULT_FEATURES, type Features } from "./commands.ts";
 import type { Store } from "./store.ts";
 import type { AdminPort } from "./admin.ts";
 import type { SeatalkWiring } from "./seatalk/callback.ts";
+import { createRateLimiter, type RateLimiter } from "./rate-limit.ts";
 
 /**
  * SEA-1: approval must go through the SeaTalk Approval Center. There is no
@@ -36,6 +37,10 @@ export interface Backend {
   identity: IdentityVerifier;
   now: () => Date;
   admin?: AdminPort;
+  /** Per-actor budget for authenticated calls (optional; off in tests). */
+  actorLimiter?: RateLimiter;
+  /** Per-address budget applied BEFORE authentication to blunt token guessing. */
+  anonLimiter?: RateLimiter;
   /** Shared secret for the Google Apps Script intraday sync (server-only). */
   intradaySecret?: string;
   /** Present only when a signature secret is configured; still gated by features.seatalkApproval. */
@@ -54,6 +59,12 @@ export function makeBackend(
   };
 }
 
+/** Parse a positive number from config; anything else falls back to the default. */
+export function positiveNumber(raw: string | undefined, dflt: number): number {
+  const n = Number(raw);
+  return raw !== undefined && Number.isFinite(n) && n > 0 ? n : dflt;
+}
+
 let cached: Backend | null | undefined;
 
 export async function getBackend(): Promise<Backend | null> {
@@ -67,10 +78,13 @@ export async function getBackend(): Promise<Backend | null> {
   }
   const { createSupabaseBackend } = await import("./supabase/backend.ts");
   const flag = (n: string) => process.env[n] === "true";
+  const perMinute = (name: string, dflt: number) => createRateLimiter({ limit: positiveNumber(process.env[name], dflt), windowMs: 60_000 });
   cached = createSupabaseBackend({ url, anonKey: anon, serviceKey: service }, {
+    actorLimiter: perMinute("SOC5_RATE_LIMIT_ACTOR_PER_MIN", 300),
+    anonLimiter: perMinute("SOC5_RATE_LIMIT_ANON_PER_MIN", 60),
     features: { seatalkApproval: flag("SOC5_FEATURE_SEATALK_APPROVAL"), seatalkAlerts: flag("SOC5_FEATURE_SEATALK_ALERTS"), googleSheets: flag("SOC5_FEATURE_GOOGLE_SHEETS") },
     seatalkSecret: process.env.SOC5_SEATALK_CALLBACK_SECRET,
-    seatalkMaxSkewSeconds: Number(process.env.SOC5_SEATALK_CALLBACK_MAX_SKEW_SECONDS ?? 300),
+    seatalkMaxSkewSeconds: positiveNumber(process.env.SOC5_SEATALK_CALLBACK_MAX_SKEW_SECONDS, 300),
   });
   return cached;
 }

@@ -114,3 +114,18 @@ test("redactError strips tokens, jwts and truncates", () => {
   assert.ok(!redactError("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc").includes("eyJhbGci"));
   assert.ok(redactError("x".repeat(2000)).length <= 500);
 });
+
+test("lock ownership: a slow worker whose claim was reclaimed cannot overwrite the new owner's outcome", async () => {
+  const s = await seeded();
+  const port = new MemoryOutboxPort(s.store);
+  const [slow] = await port.claim(["SEATALK_ALERT"], 10, 300); // worker A claims (attempt 1)
+  s.advance(301);
+  const [fast] = await port.claim(["SEATALK_ALERT"], 10, 300); // lock timed out: worker B reclaims (attempt 2)
+  assert.equal(fast.attempts, 2);
+  await port.complete(fast.id, fast.attempts, true);
+  await port.deadLetter(slow.id, slow.attempts, "late failure from the original worker");
+  await port.retryLater(slow.id, slow.attempts, new Date(), "stale");
+  const row = s.store.outbox.find((o) => o.id === fast.id)!;
+  assert.equal(row.status, "COMPLETED", "stale updates are no-ops");
+  assert.equal(row.lastError, null);
+});

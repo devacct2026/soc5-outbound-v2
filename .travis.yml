@@ -1,0 +1,38 @@
+language: node_js
+node_js:
+  - 22
+os: linux
+dist: jammy
+cache: npm
+
+addons:
+  postgresql: "16"
+  apt:
+    packages:
+      - postgresql-16
+
+services:
+  - postgresql
+
+env:
+  global:
+    # Disposable CI database only. Never point CI at a real Supabase project.
+    - PG_BIN=/usr/lib/postgresql/16/bin
+    - NEXT_TELEMETRY_DISABLED=1
+
+install:
+  - npm ci
+
+script:
+  - npm run lint
+  - npm run typecheck
+  - npm run test:unit
+  - npm run test:db          # replays ALL migrations on a throw-away cluster + RLS/constraint/audit tests
+  - npm run build
+  - npx playwright install --with-deps chromium
+  - npm run test:e2e
+  - npm run audit:deps
+
+# Deployment is intentionally NOT automated: production activation needs the
+# provider, security, operations and recovery gates in
+# docs/backend/10-implementation-readiness.md and explicit human approval.

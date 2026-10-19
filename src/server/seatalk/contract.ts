@@ -69,6 +69,8 @@ export function verifyCallbackSignature(
   rawBody: string,
   now: Date,
 ): SignatureResult {
+  // A misconfigured skew (NaN, <= 0) must fail closed, never disable the freshness check.
+  if (!Number.isFinite(cfg.maxSkewSeconds) || cfg.maxSkewSeconds <= 0) return { ok: false, reason: "STALE" };
   const sig = headers.get("x-signature");
   const ts = headers.get("x-timestamp");
   if (!sig || !ts || !/^\d{9,12}$/.test(ts) || !/^[0-9a-f]{64}$/i.test(sig)) return { ok: false, reason: "MISSING" };
@@ -90,10 +92,20 @@ export interface AssignmentInfo {
   expiresAt: string;
 }
 
+/**
+ * NEW/RETRY: process the callback. RETRY = the same payload was received before but never
+ * reached a terminal outcome (RECEIVED or FAILED), so the provider's redelivery must be
+ * processed again rather than silently acknowledged.
+ * DUPLICATE: a terminal outcome (PROCESSED / IGNORED) already exists: acknowledge only.
+ * CONFLICT: same provider event id with a different payload.
+ */
 export type RecordResult =
   | { kind: "NEW"; id: string }
+  | { kind: "RETRY"; id: string }
   | { kind: "DUPLICATE"; status: string }
   | { kind: "CONFLICT" };
+
+export const TERMINAL_CALLBACK_STATUSES = ["PROCESSED", "IGNORED"];
 
 export interface ApprovalStore {
   /** Provider-scoped dedupe (SEA-4). Exactly one of eventId / fallbackHash is set. */

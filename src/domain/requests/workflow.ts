@@ -165,7 +165,10 @@ export function notify(
   ];
   for (const r of all) {
     const target = r.userId ? `u:${r.userId}` : `r:${r.role}`;
-    const dedupeKey = `${event.requestId}:${event.type}:v${event.approvalVersion}:${target}`;
+    // The correlation id is minted once per command, so repeated events within one approval
+    // version (edits, driver reassignment) each notify, while a retry of the SAME command
+    // (same ctx) regenerates identical keys and is deduplicated.
+    const dedupeKey = `${event.requestId}:${event.type}:v${event.approvalVersion}:${event.correlationId}:${target}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
     out.push({

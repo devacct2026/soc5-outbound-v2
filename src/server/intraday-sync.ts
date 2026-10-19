@@ -4,6 +4,7 @@
 import type { Backend } from "./backend.ts";
 import { isRealDate } from "../domain/requests/validation.ts";
 import { json } from "./api.ts";
+import { readBodyLimited } from "./http-body.ts";
 import { verifyCallbackSignature } from "./seatalk/contract.ts";
 
 export const MAX_BODY_BYTES = 1_000_000;
@@ -43,10 +44,8 @@ export async function intradaySyncHandler(backend: Backend | null, request: Requ
   const secret = process.env.SOC5_INTRADAY_SYNC_SECRET ?? backend.intradaySecret;
   if (!secret) return json(503, { error: "INTRADAY_SYNC_DISABLED" });
   if (request.headers.get("x-source") !== "google-apps-script") return json(403, { error: "FORBIDDEN" });
-  const len = Number(request.headers.get("content-length") ?? 0);
-  if (len > MAX_BODY_BYTES) return json(413, { error: "PAYLOAD_TOO_LARGE" });
-  const raw = await request.text();
-  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return json(413, { error: "PAYLOAD_TOO_LARGE" });
+  const raw = await readBodyLimited(request, MAX_BODY_BYTES);
+  if (raw === null) return json(413, { error: "PAYLOAD_TOO_LARGE" });
   const sig = verifyCallbackSignature({ secret, maxSkewSeconds: 300 }, request.headers, raw, backend.now());
   if (!sig.ok) return json(401, { error: "INVALID_SIGNATURE" });
   let parsed: unknown;

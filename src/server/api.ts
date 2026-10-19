@@ -1,7 +1,7 @@
 // Transport-level handlers. Route files are thin wrappers so the whole API
 // surface is testable with plain Request objects and a MemoryStore.
 import { decodeCursor, parsePageSize } from "../domain/pagination.ts";
-import { canReadAnalytics, canReadIntraday, canView, isAdmin } from "../domain/permissions.ts";
+import { OPERATIONAL_ROLES, canReadAnalytics, canReadIntraday, canView, isAdmin } from "../domain/permissions.ts";
 import {
   approve,
   assignDriver,
@@ -32,7 +32,9 @@ import { kpiDaily, kpiHourly, kpiSummary, lastDays, monthToDate, scheduleFor, to
 import { toApiRequest } from "./api-shape.ts";
 import type { Backend } from "./backend.ts";
 import { errorResponse, runCommand, type CommandSpec } from "./commands.ts";
-import type { StoredResponse } from "./store.ts";
+import { ReportTooLargeError, type StoredResponse } from "./store.ts";
+import { clientKey } from "./rate-limit.ts";
+import { readBodyLimited } from "./http-body.ts";
 
 const SECURITY_HEADERS = {
   "cache-control": "no-store",
@@ -55,13 +57,18 @@ async function authed(
   request: Request,
 ): Promise<{ backend: Backend; actor: Actor } | Response> {
   if (!backend) return err("BACKEND_NOT_CONFIGURED");
+  // Throttle by address first so unauthenticated token guessing is bounded.
+  if (backend.anonLimiter && !backend.anonLimiter.allow(clientKey(request))) return err("RATE_LIMITED");
   const actor = await backend.authenticate(request);
   if (!actor || !actor.active) return err("UNAUTHENTICATED");
+  if (backend.actorLimiter && !backend.actorLimiter.allow(`actor:${actor.id}`)) return err("RATE_LIMITED");
   return { backend, actor };
 }
 
+const TOO_LARGE = Symbol.for("payload-too-large");
 async function body(request: Request): Promise<unknown> {
-  const text = await request.text();
+  const text = await readBodyLimited(request, 256 * 1024);
+  if (text === null) return TOO_LARGE;
   if (!text.trim()) return undefined;
   try {
     return JSON.parse(text);
@@ -70,6 +77,7 @@ async function body(request: Request): Promise<unknown> {
   }
 }
 const badJson = (b: unknown) => typeof b === "symbol";
+const tooLarge = (b: unknown) => b === TOO_LARGE;
 
 /** OPS-4: every state-changing call needs an Idempotency-Key. */
 function idemKey(request: Request): string | null {
@@ -146,6 +154,7 @@ export const createRequestHandler: Handler = async (backend, request) => {
   if (!key) return err("IDEMPOTENCY_KEY_REQUIRED");
   if (actor.role !== "ops_pic" && actor.role !== "fte_ops") return err("FORBIDDEN");
   const b = await body(request);
+  if (tooLarge(b)) return err("PAYLOAD_TOO_LARGE");
   if (badJson(b)) return err("BAD_REQUEST");
   const parsed = parseRequestDetails(b);
   if (!parsed.ok) return invalid(parsed.errors);
@@ -183,6 +192,7 @@ export const updateRequestHandler: Handler = async (backend, request, params) =>
   const key = idemKey(request);
   if (!key) return err("IDEMPOTENCY_KEY_REQUIRED");
   const b = await body(request);
+  if (tooLarge(b)) return err("PAYLOAD_TOO_LARGE");
   if (badJson(b)) return err("BAD_REQUEST");
   const parsed = parseRequestDetails(b);
   if (!parsed.ok) return invalid(parsed.errors);
@@ -219,6 +229,7 @@ export const actionHandler: Handler = async (backend, request, params) => {
   const key = idemKey(request);
   if (!key) return err("IDEMPOTENCY_KEY_REQUIRED");
   const b = await body(request);
+  if (tooLarge(b)) return err("PAYLOAD_TOO_LARGE");
   if (badJson(b)) return err("BAD_REQUEST");
 
   // Optional administrator override (HUB-4): strictly an envelope around a valid transition.
@@ -227,7 +238,9 @@ export const actionHandler: Handler = async (backend, request, params) => {
   const overrideHeader = request.headers.get("x-admin-override");
   if (overrideHeader !== null) {
     if (!isAdmin(actor)) return err("FORBIDDEN");
-    const asRole = request.headers.get("x-override-role") as Role | null;
+    const asRoleRaw = request.headers.get("x-override-role");
+    if (asRoleRaw !== null && !OPERATIONAL_ROLES.includes(asRoleRaw as Role)) return invalid({ "x-override-role": "unknown role" });
+    const asRole = asRoleRaw as Role | null;
     const verified = await a.backend.identity.verifyStrongIdentity(actor, request);
     const g = overrideSafeguards(actor, { justification: overrideHeader, identityVerified: verified, asRole: asRole ?? actor.role });
     if (!g.ok) return err(g.code);
@@ -249,7 +262,9 @@ export const actionHandler: Handler = async (backend, request, params) => {
     method: "POST",
     path: actionPath(id, action),
     idempotencyKey: key,
-    payload: { body: b ?? null, override: override ? true : false },
+    // The override role and justification are part of the hashed payload: a replay can never
+    // return an earlier response for a different override.
+    payload: { body: b ?? null, override: override ?? false },
     authorize: (act, r) => {
       if (!r) return false;
       const e = override ? effective : act;
@@ -274,7 +289,7 @@ export const actionHandler: Handler = async (backend, request, params) => {
 
   if (gated) {
     const peek = await a.backend.store.getRequest(id);
-    if (!peek) return err("NOT_FOUND");
+    if (!peek || !canView(actor, peek)) return err("NOT_FOUND"); // same masking as runCommand
     if (!spec.authorize(actor, peek)) return err("FORBIDDEN");
     const gate = await a.backend.approvalGate.authorizeWebApproval(effective, peek);
     if (!gate.ok) return err(gate.code);
@@ -291,6 +306,7 @@ export const bulkApproveHandler: Handler = async (backend, request) => {
   const key = idemKey(request);
   if (!key) return err("IDEMPOTENCY_KEY_REQUIRED");
   const b = await body(request);
+  if (tooLarge(b)) return err("PAYLOAD_TOO_LARGE");
   if (badJson(b)) return err("BAD_REQUEST");
   const ids = parseBulkIds(b);
   if (!ids.ok) return invalid(ids.errors);
@@ -314,6 +330,23 @@ export const bulkApproveHandler: Handler = async (backend, request) => {
   }
   return json(200, { data, failed });
 };
+
+const STATUS_VALUES = new Set(["PENDING", "REROUTED", "REQUESTED", "REJECTED", "CANCELLED", "DOCKING", "DOCKED", "ASSIGNED", "APPROVED", "REJECTED_BY_MM", "FOR_DOCKING", "CONFIRMED"]);
+/** Plate-number / cluster search: conservative charset so it can never alter a PostgREST filter. */
+const SEARCH_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/;
+
+function filterParams(url: URL): { ok: true; value: { status?: string; search?: string; dateFrom?: string; dateTo?: string } } | { ok: false; errors: Record<string, string> } {
+  const errors: Record<string, string> = {};
+  const status = url.searchParams.get("status") ?? undefined;
+  const search = url.searchParams.get("search") ?? undefined;
+  const dateFrom = url.searchParams.get("date_from") ?? undefined;
+  const dateTo = url.searchParams.get("date_to") ?? undefined;
+  if (status !== undefined && !STATUS_VALUES.has(status)) errors.status = "unknown status";
+  if (search !== undefined && !SEARCH_RE.test(search)) errors.search = "1-40 letters, digits, space . _ -";
+  if (dateFrom !== undefined && !isRealDate(dateFrom)) errors.date_from = "YYYY-MM-DD required";
+  if (dateTo !== undefined && !isRealDate(dateTo)) errors.date_to = "YYYY-MM-DD required";
+  return Object.keys(errors).length ? { ok: false, errors } : { ok: true, value: { status, search, dateFrom, dateTo } };
+}
 
 const listParams = (url: URL) => {
   const size = parsePageSize(url.searchParams.get("limit") ?? url.searchParams.get("per_page"));
@@ -345,13 +378,9 @@ export const listHandler: Handler = async (backend, request) => {
   const { size, cursor } = listParams(url);
   if (!size.ok) return invalid({ limit: "must be 25, 50 or 100" });
   if (!cursor.ok) return invalid({ cursor: "invalid cursor" });
-  const status = url.searchParams.get("status") ?? undefined;
-  const search = url.searchParams.get("search") ?? undefined;
-  const dateFrom = url.searchParams.get("date_from") ?? undefined;
-  const dateTo = url.searchParams.get("date_to") ?? undefined;
-  if ((dateFrom && !isRealDate(dateFrom)) || (dateTo && !isRealDate(dateTo))) return invalid({ date: "YYYY-MM-DD required" });
-  if (search && search.length > 40) return invalid({ search: "too long" });
-  const page = await a.backend.store.listRequests(a.actor, { status, search, dateFrom, dateTo, limit: size.value, cursor: cursor.value });
+  const f = filterParams(url);
+  if (!f.ok) return invalid(f.errors);
+  const page = await a.backend.store.listRequests(a.actor, { ...f.value, limit: size.value, cursor: cursor.value });
   return json(200, pageBody(page, a.actor, size.value));
 };
 
@@ -376,12 +405,14 @@ export const eventsHandler: Handler = async (backend, request, params) => {
 export const metricsHandler: Handler = async (backend, request) => {
   const a = await authed(backend, request);
   if (a instanceof Response) return a;
-  const u = new URL(request.url);
-  return json(200, await a.backend.store.metrics(a.actor, {
-    search: u.searchParams.get("search") ?? undefined,
-    dateFrom: u.searchParams.get("date_from") ?? undefined,
-    dateTo: u.searchParams.get("date_to") ?? undefined,
-  }));
+  const f = filterParams(new URL(request.url));
+  if (!f.ok) return invalid(f.errors);
+  try {
+    return json(200, await a.backend.store.metrics(a.actor, f.value));
+  } catch (e) {
+    if (e instanceof ReportTooLargeError) return err("RANGE_TOO_LARGE");
+    throw e;
+  }
 };
 
 export const notificationsHandler: Handler = async (backend, request) => {
@@ -403,7 +434,7 @@ export const clustersHandler: Handler = async (backend, request) => {
   const a = await authed(backend, request);
   if (a instanceof Response) return a;
   const q = new URL(request.url).searchParams.get("search") ?? "";
-  if (q.length < 3 || q.length > 80) return invalid({ search: "3-80 characters" });
+  if (q.length < 3 || q.length > 80 || !/^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(q)) return invalid({ search: "3-80 letters, digits, space . _ -" });
   return json(200, { data: await a.backend.store.searchClusters(q) });
 };
 
@@ -433,18 +464,30 @@ async function reporting(
   const from = u.searchParams.get("date_from") ?? def.from;
   const to = u.searchParams.get("date_to") ?? def.to;
   if (!isRealDate(from) || !isRealDate(to) || from > to) return invalid({ date: "valid YYYY-MM-DD range required" });
+  // Bounded range: reports are aggregated in memory, so an unbounded window is a DoS vector.
+  if ((Date.parse(to) - Date.parse(from)) / 86_400_000 > 400) return invalid({ date: "range may not exceed 400 days" });
   return { backend: a.backend, actor: a.actor, from, to, tz };
+}
+
+/** Load reporting rows; a range that exceeds the safe cap fails loudly instead of under-counting. */
+async function rows(b: Backend, from: string, to: string, f: (rows: RequestRecord[]) => Response): Promise<Response> {
+  try {
+    return f(await b.store.reportingRows(from, to));
+  } catch (e) {
+    if (e instanceof ReportTooLargeError) return err("RANGE_TOO_LARGE");
+    throw e;
+  }
 }
 
 export const kpiSummaryHandler: Handler = async (backend, request) => {
   const r = await reporting(backend, request);
   if (r instanceof Response) return r;
-  return json(200, kpiSummary(await r.backend.store.reportingRows(r.from, r.to), r.from, r.to, r.tz));
+  return rows(r.backend, r.from, r.to, (x) => json(200, kpiSummary(x, r.from, r.to, r.tz)));
 };
 export const kpiDailyHandler: Handler = async (backend, request) => {
   const r = await reporting(backend, request);
   if (r instanceof Response) return r;
-  return json(200, { data: kpiDaily(await r.backend.store.reportingRows(r.from, r.to), r.from, r.to, r.tz) });
+  return rows(r.backend, r.from, r.to, (x) => json(200, { data: kpiDaily(x, r.from, r.to, r.tz) }));
 };
 export const kpiHourlyHandler: Handler = async (backend, request) => {
   const r = await reporting(backend, request);
@@ -460,16 +503,18 @@ export const kpiHourlyHandler: Handler = async (backend, request) => {
 export const kpiExportHandler: Handler = async (backend, request) => {
   const r = await reporting(backend, request);
   if (r instanceof Response) return r;
-  const rows = await r.backend.store.reportingRows(r.from, r.to);
+  return rows(r.backend, r.from, r.to, (data) => csvResponse(r.from, r.to, data));
+};
+function csvResponse(from: string, to: string, rows: RequestRecord[]): Response {
   const csv = toCsv(
     ["id", "request_timestamp", "status", "approval_status", "cluster", "region", "truck_size", "truck_type", "plate_number"],
     rows.map((x) => [x.id, x.requestTimestamp, x.status, x.approvalStatus, x.cluster, x.region, x.truckSize, x.truckType, x.plateNumber]),
   );
   return new Response(csv, {
     status: 200,
-    headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="requests_${r.from}_${r.to}.csv"`, ...SECURITY_HEADERS },
+    headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="requests_${from}_${to}.csv"`, ...SECURITY_HEADERS },
   });
-};
+}
 
 export const markAllReadHandler: Handler = (backend, request) => markReadHandler(backend, request, { id: "all" });
 
