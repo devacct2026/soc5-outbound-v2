@@ -139,3 +139,10 @@ Updated test totals: unit 97/97, Nest 3/3, DB 6 SQL files, Playwright dashboard 
 - Set `NEXT_PUBLIC_SOC5_API_URL` to point the browser at the NestJS API instead of the same-origin Next routes.
 - Tests: `live-data.test.ts` (mapping), `login.test.ts`, and Playwright `dashboard-live.spec.ts` (sign-in swaps mock for API data, sign-out restores it; network mocked). Totals: unit 102/102, Nest 3/3, Playwright 10/10 for api+live specs plus dashboard 4/4, DB 6 SQL files.
 - Not verified: a real sign-in against the disposable Supabase project with a real approved profile (needs an account created and approved by an admin first); other pages (Queue, Approvals, Docking, Reports...) still use their mock module content, and there are no write actions (create/approve/dock) in the UI yet.
+
+## Queue / Approvals / Docking pages with workflow actions
+
+- When signed in, these three pages show the caller's role-based actionable queue (`/requests/queue`) with the actions that role may take: FTE Ops approve/reject, FTE MM assign truck/reject, Doc Officer assign driver, creator Ops PIC enter trip number. Each submit carries an `Idempotency-Key` minted when the form opens; the server re-checks role, state and ownership, and errors are shown in plain language (for example approval answers that SeaTalk Approval Center is not enabled and the request stays pending).
+- Signed out, the original prototype content is unchanged.
+- Tests: Playwright `queue-actions.spec.ts` (4 tests, API mocked at the network layer). Full Playwright run: 17 of 18 passed in the all-at-once run; the one miss was the pre-existing `dashboard.spec.ts` sidebar test timing out on a cold dev-server compile, and it passes when re-run (4/4). Lint, typecheck and build clean.
+- Not covered in the UI: creating requests, editing/resubmitting rejected requests, cancel, Reports/Users/Settings pages (still prototype content).

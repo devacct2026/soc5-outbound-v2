@@ -11,6 +11,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { ActionQueue } from "./action-queue";
 
 const modules: Record<
   string,
@@ -114,6 +115,7 @@ export function ModulePage({ page }: { page: string }) {
           </article>
         ))}
       </div>
+      {["Queue", "Approvals", "Docking"].includes(page) && <ActionQueue page={page} />}
       <section className="panel module-content" aria-labelledby="module-content-title">
         <div className="module-content-heading">
           <span className="panel-icon"><Icon size={19} aria-hidden="true" /></span>
