@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seatalkChallengeHandler, seatalkDecisionHandler, type SeatalkWiring } from "./callback.ts";
-import { sha256, signCallback, verifyCallbackSignature, disabledApprovalProvider, disabledAlertSender, ProviderDisabledError } from "./contract.ts";
+import { sha256, signApprovalCallback, signEvent, verifyApprovalCallbackSignature, disabledAlertSender, ProviderDisabledError } from "./contract.ts";
+import { disabledApprovalProvider, SeaTalkProviderError } from "./provider.ts";
 import { MemoryApprovalStore, actorOf } from "./memory.ts";
 import { makeBackend, type Backend } from "../backend.ts";
 import { MemoryStore } from "../memory.ts";
@@ -10,7 +11,6 @@ import { createRequest } from "../../domain/requests/lifecycle.ts";
 
 const SECRET = "test-secret";
 const NOW = new Date("2026-10-19T10:00:00Z");
-const ts = () => String(Math.floor(NOW.getTime() / 1000));
 const details = { clusterId: null, cluster: "C", region: "R", dockNo: "1", backlogs: 1, backlogsTimestamp: null, truckSize: "4W" as const, truckType: "WETLEASE" as const };
 
 async function setup(enabled = true) {
@@ -19,7 +19,7 @@ async function setup(enabled = true) {
   const approvals = new MemoryApprovalStore();
   const backend = Object.assign(
     makeBackend({ store, authenticate: async () => null, now: () => NOW, features: { seatalkApproval: enabled, seatalkAlerts: false, googleSheets: false } }),
-    { seatalk: { signature: { secret: SECRET, maxSkewSeconds: 300 }, approvals } satisfies SeatalkWiring },
+    { seatalk: { signature: { secret: SECRET, maxSkewSeconds: 300 }, eventSecret: "event-signing-secret", approvals } satisfies SeatalkWiring },
   ) as Backend & { seatalk: SeatalkWiring };
   const reqId = crypto.randomUUID();
   const pic = { id: "pic1", role: "ops_pic" as const, active: true };
@@ -34,18 +34,29 @@ async function setup(enabled = true) {
   return { store, approvals, backend, reqId, assignmentId };
 }
 
-const post = (backend: Backend, action: "approve" | "reject", payload: Record<string, unknown>, opts: { secret?: string; timestamp?: string; raw?: string } = {}) => {
-  const raw = opts.raw ?? JSON.stringify(payload);
-  const timestamp = opts.timestamp ?? ts();
-  return seatalkDecisionHandler(backend, new Request("http://t/cb", {
-    method: "POST", body: raw,
-    headers: { "x-timestamp": timestamp, "x-signature": signCallback(opts.secret ?? SECRET, timestamp, raw) },
-  }), action);
+const URL_BASE = "http://t/api/v1/integrations/seatalk/approval";
+/** Build a signed approve/reject callback exactly as the (assumed) SeaTalk scheme requires; the token rides on the URL. */
+function signedRequest(action: "approve" | "reject", raw: string, opts: { secret?: string; date?: string; token?: string | null; tamper?: boolean } = {}) {
+  const token = opts.token === undefined ? "good-token-123" : opts.token;
+  const url = `${URL_BASE}/${action}${token ? `?token=${token}` : ""}`;
+  const date = opts.date ?? NOW.toUTCString();
+  const parts = { method: "POST", path: new URL(url).pathname, contentType: "application/json", date, xToken: "xt-1", search: new URL(url).search };
+  const authorization = signApprovalCallback(opts.secret ?? SECRET, parts, raw);
+  return new Request(url, {
+    method: "POST",
+    body: opts.tamper ? raw.replace("E100", "E999") : raw,
+    headers: { "content-type": "application/json", date, "x-token": "xt-1", authorization },
+  });
+}
+const post = (backend: Backend, action: "approve" | "reject", payload: Record<string, unknown>, opts: { secret?: string; date?: string; raw?: string; token?: string | null } = {}) => {
+  const { token: urlToken, ...official } = payload as { token?: string }; // the token is never part of the official body
+  const raw = opts.raw ?? JSON.stringify(official);
+  return seatalkDecisionHandler(backend, signedRequest(action, raw, { ...opts, token: opts.token !== undefined ? opts.token : (urlToken ?? "good-token-123") }), action);
 };
 const body = (extra: Record<string, unknown> = {}) => ({ item_id: "item-1", token: "good-token-123", employee: { employee_code: "E100" }, event_id: "evt-1", ...extra });
 
 test("disabled by default: provider stubs refuse, callback endpoint answers 503", async () => {
-  await assert.rejects(disabledApprovalProvider.createItem("r", "E"), ProviderDisabledError);
+  await assert.rejects(disabledApprovalProvider.createItem({} as never), SeaTalkProviderError);
   await assert.rejects(disabledAlertSender.send({ dedupeKey: "k", requestId: "r", event: "e" }), ProviderDisabledError);
   const s = await setup(false);
   assert.equal((await post(s.backend, "approve", body())).status, 503);
@@ -53,18 +64,20 @@ test("disabled by default: provider stubs refuse, callback endpoint answers 503"
   assert.equal((await seatalkDecisionHandler(null, new Request("http://t"), "approve")).status, 503);
 });
 
-test("signature: valid accepted; wrong secret, tampered body, stale or missing headers rejected before any processing", async () => {
+test("signature: valid accepted; wrong secret, tampered body, stale Date or missing headers rejected before any processing", async () => {
   const s = await setup();
   assert.equal((await post(s.backend, "approve", body({ event_id: "bad-1" }), { secret: "wrong" })).status, 401);
-  const raw = JSON.stringify(body({ event_id: "bad-2" }));
-  const t = ts();
-  const tampered = await seatalkDecisionHandler(s.backend, new Request("http://t", { method: "POST", body: raw.replace("E100", "E999"), headers: { "x-timestamp": t, "x-signature": signCallback(SECRET, t, raw) } }), "approve");
-  assert.equal(tampered.status, 401);
-  assert.equal((await post(s.backend, "approve", body({ event_id: "bad-3" }), { timestamp: String(Number(ts()) - 301) })).status, 401, "stale");
-  assert.equal((await seatalkDecisionHandler(s.backend, new Request("http://t", { method: "POST", body: raw }), "approve")).status, 401, "missing");
+  const raw = JSON.stringify({ item_id: "item-1", employee: { employee_code: "E100" } });
+  assert.equal((await seatalkDecisionHandler(s.backend, signedRequest("approve", raw, { tamper: true }), "approve")).status, 401, "tampered body");
+  const stale = new Date(NOW.getTime() - 301_000).toUTCString();
+  assert.equal((await post(s.backend, "approve", body({ event_id: "bad-3" }), { date: stale })).status, 401, "stale Date header");
+  assert.equal((await seatalkDecisionHandler(s.backend, new Request(`${URL_BASE}/approve?token=good-token-123`, { method: "POST", body: raw }), "approve")).status, 401, "missing headers");
   assert.equal(s.approvals.callbacks.length, 0, "rejected callbacks are never recorded");
   assert.equal(s.store.requests.get(s.reqId)?.status, "PENDING");
-  assert.deepEqual(verifyCallbackSignature({ secret: SECRET, maxSkewSeconds: 300 }, new Headers({ "x-timestamp": "123", "x-signature": "zz" }), "{}", NOW), { ok: false, reason: "MISSING" });
+  const req = signedRequest("approve", raw);
+  assert.deepEqual(verifyApprovalCallbackSignature({ secret: SECRET, maxSkewSeconds: 300 }, req, raw, NOW), { ok: true });
+  const moved = new Request(req.url.replace("good-token-123", "other-token-999"), { method: "POST", body: raw, headers: req.headers });
+  assert.equal(verifyApprovalCallbackSignature({ secret: SECRET, maxSkewSeconds: 300 }, moved, raw, NOW).ok, false, "the query (token) is part of the signed string");
 });
 
 test("valid approval applies the workflow once with SEATALK source and closes the assignment", async () => {
@@ -148,14 +161,20 @@ test("rejection callback requires a reason and applies APR-3 routing", async () 
   assert.equal(r.rejectionDisposition, "RETURN_TO_OPS_PIC");
 });
 
-test("challenge endpoint echoes only after signature verification", async () => {
+test("event endpoint (official contract): handshake echoes only after the Signature header verifies; other events are acknowledged unprocessed", async () => {
   const s = await setup();
-  const raw = JSON.stringify({ event: { seatalk_challenge: "abc123" } });
-  const t = ts();
-  const ok = await seatalkChallengeHandler(s.backend, new Request("http://t", { method: "POST", body: raw, headers: { "x-timestamp": t, "x-signature": signCallback(SECRET, t, raw) } }));
+  const raw = JSON.stringify({ event_id: "e1", event_type: "event_verification", timestamp: 1, app_id: "a", event: { seatalk_challenge: "abc123" } });
+  const sign = (b: string) => signEvent("event-signing-secret", b);
+  const ok = await seatalkChallengeHandler(s.backend, new Request("http://t", { method: "POST", body: raw, headers: { signature: sign(raw) } }));
   assert.deepEqual(await ok.json(), { seatalk_challenge: "abc123" });
-  const bad = await seatalkChallengeHandler(s.backend, new Request("http://t", { method: "POST", body: raw, headers: { "x-timestamp": t, "x-signature": "0".repeat(64) } }));
-  assert.equal(bad.status, 401);
+  assert.equal((await seatalkChallengeHandler(s.backend, new Request("http://t", { method: "POST", body: raw, headers: { signature: "0".repeat(64) } }))).status, 401);
+  assert.equal((await seatalkChallengeHandler(s.backend, new Request("http://t", { method: "POST", body: raw }))).status, 401);
+  const other = JSON.stringify({ event_id: "e2", event_type: "new_bot_subscriber", event: {} });
+  const res = await seatalkChallengeHandler(s.backend, new Request("http://t", { method: "POST", body: other, headers: { signature: sign(other) } }));
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { code: 0 });
+  // the official vector: sha256(body + secret), lowercase hex
+  assert.equal(signEvent("s", "b"), (await import("node:crypto")).createHash("sha256").update("bs").digest("hex"));
 });
 
 test("retry semantics: failed or crashed callbacks are reprocessed on redelivery; only terminal outcomes are deduplicated", async () => {
@@ -173,7 +192,7 @@ test("retry semantics: failed or crashed callbacks are reprocessed on redelivery
   // A crash after recording (status stuck at RECEIVED) is reprocessed too.
   const s2 = await setup();
   const { callbackFingerprint } = await import("./contract.ts");
-  await s2.approvals.recordCallback({ provider: "seatalk", eventId: "crash-1", fallbackHash: null, payloadHash: callbackFingerprint(JSON.stringify(body({ event_id: "crash-1" }))), employeeCode: "E100", action: "approve" });
+  await s2.approvals.recordCallback({ provider: "seatalk", eventId: "crash-1", fallbackHash: null, payloadHash: callbackFingerprint(JSON.stringify({ item_id: "item-1", employee: { employee_code: "E100" }, event_id: "crash-1" })), employeeCode: "E100", action: "approve" });
   assert.equal((await post(s2.backend, "approve", body({ event_id: "crash-1" }))).status, 200);
   assert.equal(s2.store.requests.get(s2.reqId)?.status, "REQUESTED");
 });
@@ -205,13 +224,12 @@ test("transient VERSION_CONFLICT is not swallowed as a decision: provider gets a
 test("bounded bodies and fail-closed skew configuration", async () => {
   const s = await setup();
   const big = "x".repeat(70 * 1024);
-  const t = ts();
-  const res = await seatalkDecisionHandler(s.backend, new Request("http://t", { method: "POST", body: big, headers: { "x-timestamp": t, "x-signature": signCallback(SECRET, t, big) } }), "approve");
-  assert.equal(res.status, 413);
-  const lying = await seatalkDecisionHandler(s.backend, new Request("http://t", { method: "POST", body: "{}", headers: { "content-length": "999999" } }), "approve");
+  assert.equal((await seatalkDecisionHandler(s.backend, signedRequest("approve", big), "approve")).status, 413);
+  const lying = await seatalkDecisionHandler(s.backend, new Request(`${URL_BASE}/approve`, { method: "POST", body: "{}", headers: { "content-length": "999999" } }), "approve");
   assert.equal(lying.status, 413);
   for (const bad of [Number.NaN, 0, -5]) {
-    const out = verifyCallbackSignature({ secret: SECRET, maxSkewSeconds: bad }, new Headers({ "x-timestamp": t, "x-signature": signCallback(SECRET, t, "{}") }), "{}", NOW);
-    assert.equal(out.ok, false, `skew ${bad} must fail closed`);
+    const req = signedRequest("approve", "{}");
+    assert.equal(verifyApprovalCallbackSignature({ secret: SECRET, maxSkewSeconds: bad }, req, "{}", NOW).ok, false, `skew ${bad} must fail closed`);
   }
+  assert.equal(verifyApprovalCallbackSignature({ secret: "", maxSkewSeconds: 300 }, signedRequest("approve", "{}"), "{}", NOW).ok, false, "empty secret fails closed");
 });

@@ -72,9 +72,12 @@ export class SupabaseApprovalStore implements ApprovalStore {
   }
 
   async closeAssignment(id: string, status: "APPROVED" | "REJECTED") {
-    await this.rest.patch("seatalk_approval_assignments", `id=eq.${q(id)}`, {
+    // The request-status trigger may already have CLOSED the assignment inside the decision transaction;
+    // the responder's outcome still wins over that generic closure.
+    await this.rest.patch("seatalk_approval_assignments", `id=eq.${q(id)}&status=in.(PENDING,CLOSED)`, {
       status,
       responded_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     });
   }
 }

@@ -101,10 +101,10 @@ interface ActionDef {
 const wrap = <T>(p: Parsed<T>, f: (v: T) => (r: RequestRecord, c: { now: Date; correlationId: string }) => WorkflowResult) =>
   p.ok ? ({ ok: true, value: f(p.value) } as const) : p;
 
-function actionFor(action: string, actor: Actor): ActionDef | null {
+function actionFor(action: string, actor: Actor, src: { value: "WEB" | "SEATALK" } = { value: "WEB" }): ActionDef | null {
   switch (action) {
     case "approve":
-      return { roles: ["fte_ops"], build: (b) => wrap(parseEmpty(b), () => (r, c) => approve(r, actor, c, "WEB")) };
+      return { roles: ["fte_ops"], build: (b) => wrap(parseEmpty(b), () => (r, c) => approve(r, actor, c, src.value)) };
     case "reject-ops":
       return {
         roles: ["fte_ops"],
@@ -134,11 +134,11 @@ function actionFor(action: string, actor: Actor): ActionDef | null {
         build: (b) => wrap(parseTrip(b), (t) => (r, c) => dock(r, actor, t, c)),
       };
     case "reject": // alias of the earlier APR-3 route: role selects the stage
-      if (actor.role === "fte_mm") return actionFor("reject-mm", actor);
-      return actionFor("reject-ops", actor);
+      if (actor.role === "fte_mm") return actionFor("reject-mm", actor, src);
+      return actionFor("reject-ops", actor, src);
     case "mark-docked": // compatibility adapter: role-dependent semantics (04-api-contracts)
-      if (actor.role === "doc_officer") return actionFor("assign-driver", actor);
-      if (actor.role === "ops_pic") return actionFor("dock", actor);
+      if (actor.role === "doc_officer") return actionFor("assign-driver", actor, src);
+      if (actor.role === "ops_pic") return actionFor("dock", actor, src);
       return { roles: [], build: () => ({ ok: false, errors: {} }) };
     default:
       return null;
@@ -224,7 +224,8 @@ export const actionHandler: Handler = async (backend, request, params) => {
   const id = params?.id ?? "";
   const action = params?.action ?? "";
   if (!isUuid(id)) return err("NOT_FOUND");
-  const def = actionFor(action, actor);
+  const approvalSrc: { value: "WEB" | "SEATALK" } = { value: "WEB" };
+  const def = actionFor(action, actor, approvalSrc);
   if (!def) return err("NOT_FOUND");
   const key = idemKey(request);
   if (!key) return err("IDEMPOTENCY_KEY_REQUIRED");
@@ -247,7 +248,7 @@ export const actionHandler: Handler = async (backend, request, params) => {
     effective = g.actingAs;
     override = g.metadata;
   }
-  const useDef = effective === actor ? def : actionFor(action, effective);
+  const useDef = effective === actor ? def : actionFor(action, effective, approvalSrc);
   if (!useDef) return err("NOT_FOUND");
 
   const now = a.backend.now();
@@ -256,6 +257,7 @@ export const actionHandler: Handler = async (backend, request, params) => {
 
   // SEA-1: no internal approval bypass. Web approval requires the SeaTalk gate.
   const gated = action === "approve";
+  let gateApplied: (() => Promise<void>) | undefined;
   const spec: CommandSpec = {
     actor,
     requestId: id,
@@ -293,8 +295,12 @@ export const actionHandler: Handler = async (backend, request, params) => {
     if (!spec.authorize(actor, peek)) return err("FORBIDDEN");
     const gate = await a.backend.approvalGate.authorizeWebApproval(effective, peek);
     if (!gate.ok) return err(gate.code);
+    gateApplied = gate.applied;
+    approvalSrc.value = gate.source ?? "WEB";
   }
-  return send(await runCommand(a.backend.store, spec));
+  const done = await runCommand(a.backend.store, spec);
+  if (done.status === 200 && gateApplied) await gateApplied();
+  return send(done);
 };
 
 /** POST /api/v1/requests/bulk-approve (FTE Ops only; same transition service). */
@@ -322,9 +328,10 @@ export const bulkApproveHandler: Handler = async (backend, request) => {
       actor, requestId: id, method: "POST", path: actionPath(id, "approve"),
       idempotencyKey: `${key}:${id}`.slice(0, 200), payload: null,
       authorize: (act, r) => !!r && act.role === "fte_ops",
-      decide: (r) => (r ? approve(r, actor, { now, correlationId: crypto.randomUUID() }, "WEB") : fail("INVALID_STATE")),
+      decide: (r) => (r ? approve(r, actor, { now, correlationId: crypto.randomUUID() }, gate.source ?? "WEB") : fail("INVALID_STATE")),
       features: a.backend.features,
     });
+    if (res.status === 200 && gate.applied) await gate.applied();
     if (res.status === 200) data.push((res.body as { request: unknown }).request);
     else failed.push({ id, error: (res.body as { error: string }).error });
   }
@@ -523,4 +530,14 @@ export const meHandler: Handler = async (backend, request) => {
   if (a instanceof Response) return a;
   const { id, role, isAdmin: admin, reportingPermission } = a.actor;
   return json(200, { id, role, is_admin: !!admin, reporting_permission: !!reportingPermission });
+};
+
+/** POST /api/v1/presence/heartbeat (SEA-6): FTE Ops presence for round-robin routing. No idempotency key: a repeat is harmless. */
+export const heartbeatHandler: Handler = async (backend, request) => {
+  const a = await authed(backend, request);
+  if (a instanceof Response) return a;
+  if (a.actor.role !== "fte_ops") return err("FORBIDDEN");
+  if (!a.backend.approvals) return err("APPROVAL_PROVIDER_DISABLED");
+  await a.backend.approvals.heartbeat(a.actor.id);
+  return json(200, { ok: true, last_seen_at: a.backend.now().toISOString(), active_for_seconds: a.backend.presenceActiveSeconds ?? 60 });
 };

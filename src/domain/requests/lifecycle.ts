@@ -31,7 +31,7 @@ export interface RequestDetails {
   region: string;
   dockNo: string;
   backlogs: number;
-  backlogsTimestamp: string | null; // YYYY-MM-DD
+  backlogsTimestamp: string | null; // full UTC instant (ISO 8601)
   truckSize: TruckSize;
   truckType: TruckType;
 }

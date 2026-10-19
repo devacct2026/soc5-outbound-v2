@@ -5,7 +5,8 @@ import { localDate, DEFAULT_SCHEDULE, type Schedule } from "../../domain/kpi.ts"
 import { encodeCursor, type Cursor } from "../../domain/pagination.ts";
 import type { RequestRecord } from "../../domain/requests/lifecycle.ts";
 import { countsAsAwaitingAction, type Actor, type Role } from "../../domain/requests/workflow.ts";
-import { makeBackend, type Backend } from "../backend.ts";
+import { createSeatalkApprovalGate, makeBackend, type Backend } from "../backend.ts";
+import type { ApprovalCoordinator } from "../seatalk/approvals.ts";
 import {
   ReportTooLargeError,
   VersionConflictError,
@@ -363,6 +364,10 @@ export function makeAuthenticator(cfg: SupabaseConfig, rest: Rest) {
 export interface SupabaseBackendOptions {
   features?: Backend["features"];
   seatalkSecret?: string;
+  /** Official event-callback signing secret (verification handshake). */
+  seatalkEventSecret?: string;
+  approvals?: ApprovalCoordinator;
+  presenceActiveSeconds?: number;
   seatalkMaxSkewSeconds?: number;
   actorLimiter?: Backend["actorLimiter"];
   anonLimiter?: Backend["anonLimiter"];
@@ -370,6 +375,8 @@ export interface SupabaseBackendOptions {
 
 export function createSupabaseBackend(cfg: SupabaseConfig, opts: SupabaseBackendOptions = {}): Backend {
   const rest = new Rest({ url: cfg.url, serviceKey: cfg.serviceKey, fetchImpl: cfg.fetchImpl });
+  const approvalStore = new SupabaseApprovalStore(rest);
+  const wired = !!(opts.seatalkSecret || opts.seatalkEventSecret);
   return makeBackend({
     store: new SupabaseStore(rest),
     authenticate: makeAuthenticator(cfg, rest),
@@ -377,8 +384,17 @@ export function createSupabaseBackend(cfg: SupabaseConfig, opts: SupabaseBackend
     ...(opts.features ? { features: opts.features } : {}),
     ...(opts.actorLimiter ? { actorLimiter: opts.actorLimiter } : {}),
     ...(opts.anonLimiter ? { anonLimiter: opts.anonLimiter } : {}),
-    ...(opts.seatalkSecret
-      ? { seatalk: { signature: { secret: opts.seatalkSecret, maxSkewSeconds: opts.seatalkMaxSkewSeconds ?? 300 }, approvals: new SupabaseApprovalStore(rest) } }
+    ...(opts.presenceActiveSeconds ? { presenceActiveSeconds: opts.presenceActiveSeconds } : {}),
+    ...(opts.approvals ? { approvals: opts.approvals } : {}),
+    ...(opts.approvals && opts.features?.seatalkApproval ? { approvalGate: createSeatalkApprovalGate(opts.approvals, approvalStore) } : {}),
+    ...(wired
+      ? {
+          seatalk: {
+            signature: { secret: opts.seatalkSecret ?? "", maxSkewSeconds: opts.seatalkMaxSkewSeconds ?? 300 },
+            ...(opts.seatalkEventSecret ? { eventSecret: opts.seatalkEventSecret } : {}),
+            approvals: approvalStore,
+          },
+        }
       : {}),
   });
 }

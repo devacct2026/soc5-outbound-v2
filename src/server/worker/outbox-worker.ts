@@ -3,7 +3,7 @@
 // backoff / dead-letter. Handlers exist only for enabled+verified channels, so
 // a disabled provider never burns attempts or dead-letters work.
 
-export type Channel = "SEATALK_ALERT" | "SEATALK_APPROVAL_SYNC" | "GOOGLE_SHEETS";
+export type Channel = "SEATALK_ALERT" | "SEATALK_APPROVAL_SYNC" | "SEATALK_APPROVAL_PROVISION" | "GOOGLE_SHEETS";
 
 export interface OutboxRow {
   id: string;

@@ -21,7 +21,7 @@ export interface IdemScope {
 
 export interface OutboxIntent {
   idempotencyKey: string;
-  channel: "SEATALK_ALERT" | "SEATALK_APPROVAL_SYNC" | "GOOGLE_SHEETS";
+  channel: "SEATALK_ALERT" | "SEATALK_APPROVAL_SYNC" | "SEATALK_APPROVAL_PROVISION" | "GOOGLE_SHEETS";
   eventType: string;
   payload: Record<string, unknown>;
 }

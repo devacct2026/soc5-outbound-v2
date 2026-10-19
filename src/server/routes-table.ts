@@ -36,6 +36,7 @@ export const ROUTES: Route[] = [
   { method: "GET", path: "kpi/hourly", handler: api.kpiHourlyHandler },
   { method: "GET", path: "kpi/export", handler: api.kpiExportHandler },
   { method: "GET", path: "auth/me", handler: api.meHandler },
+  { method: "POST", path: "presence/heartbeat", handler: api.heartbeatHandler },
   { method: "POST", path: "auth/login", handler: loginHandler },
   { method: "GET", path: "operations/outbox/status", handler: admin.outboxStatusHandler },
   { method: "POST", path: "operations/outbox/:id/:action", handler: admin.outboxActionHandler },

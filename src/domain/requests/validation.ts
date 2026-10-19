@@ -1,5 +1,6 @@
 // Server-side input validation (the UI is never the authority). Unknown fields
 // are rejected. Hand-written to keep the domain dependency-free.
+import { DEFAULT_SCHEDULE, zonedToUtc } from "../kpi.ts";
 import {
   TRUCK_SIZES,
   TRUCK_TYPES,
@@ -42,6 +43,30 @@ export function isRealDate(s: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
+const ZONED = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,6})?)?(Z|[+-]\d{2}:?\d{2})?$/;
+
+/**
+ * Backlog date/time (lead 8): the FULL instant is preserved, never truncated to a date.
+ * Accepts an ISO instant with offset/Z, a zone-less wall-clock date-time (read in the business
+ * timezone), or a bare date (start of that business day, kept for legacy clients). Returns a UTC
+ * ISO string, or null when the value is not a real date/time.
+ */
+export function parseBacklogInstant(v: string, tz: string = DEFAULT_SCHEDULE.timezone): string | null {
+  const input = v.trim();
+  if (isRealDate(input)) return new Date(zonedToUtc(input, "00:00", tz)).toISOString();
+  const m = ZONED.exec(input);
+  if (!m) return null;
+  const [, date, hh, mm, ss, zone] = m;
+  if (!isRealDate(date) || +hh > 23 || +mm > 59 || (ss !== undefined && +ss > 59)) return null;
+  let ms: number;
+  if (zone) {
+    ms = Date.parse(input.replace(" ", "T").replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+  } else {
+    ms = zonedToUtc(date, `${hh}:${mm}`, tz) + (ss ? Number(ss) * 1000 : 0);
+  }
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
 export function parseRequestDetails(body: unknown): Parsed<RequestDetails> {
   const errors: Record<string, string> = {};
   if (!isObj(body)) return { ok: false, errors: { body: "JSON object required" } };
@@ -59,9 +84,9 @@ export function parseRequestDetails(body: unknown): Parsed<RequestDetails> {
   }
   let backlogsTimestamp: string | null = null;
   if (body.backlogs_timestamp != null) {
-    if (typeof body.backlogs_timestamp !== "string" || !isRealDate(body.backlogs_timestamp)) {
-      errors.backlogs_timestamp = "YYYY-MM-DD date required";
-    } else backlogsTimestamp = body.backlogs_timestamp;
+    const parsedAt = typeof body.backlogs_timestamp === "string" ? parseBacklogInstant(body.backlogs_timestamp) : null;
+    if (!parsedAt) errors.backlogs_timestamp = "ISO date-time (or YYYY-MM-DD) required";
+    else backlogsTimestamp = parsedAt;
   }
   let clusterId: string | null = null;
   if (body.cluster_id != null) {

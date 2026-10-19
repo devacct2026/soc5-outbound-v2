@@ -6,6 +6,8 @@ import { DEFAULT_FEATURES, type Features } from "./commands.ts";
 import type { Store } from "./store.ts";
 import type { AdminPort } from "./admin.ts";
 import type { SeatalkWiring } from "./seatalk/callback.ts";
+import type { ApprovalCoordinator } from "./seatalk/approvals.ts";
+import type { ApprovalStore } from "./seatalk/contract.ts";
 import { createRateLimiter, type RateLimiter } from "./rate-limit.ts";
 
 /**
@@ -13,8 +15,32 @@ import { createRateLimiter, type RateLimiter } from "./rate-limit.ts";
  * internal bypass: the default gate refuses every web approval until the
  * provider contract is verified in a sandbox (SEA-2) and the feature enabled.
  */
+export type GateFailure =
+  | "APPROVAL_PROVIDER_DISABLED"
+  | "FORBIDDEN"
+  | "NOT_ASSIGNED_APPROVER"
+  | "NOT_APPROVED_IN_SEATALK"
+  | "PROVIDER_UNAVAILABLE";
+export type GateResult =
+  | { ok: true; /** Where the decision came from; a verified SeaTalk decision is recorded as SEATALK. */ source?: "WEB" | "SEATALK"; applied?: () => Promise<void> }
+  | { ok: false; code: GateFailure };
 export interface ApprovalGate {
-  authorizeWebApproval(actor: Actor, request: RequestRecord): Promise<{ ok: true } | { ok: false; code: "APPROVAL_PROVIDER_DISABLED" | "FORBIDDEN" }>;
+  authorizeWebApproval(actor: Actor, request: RequestRecord): Promise<GateResult>;
+}
+
+/**
+ * SEA-1/SEA-5: "approving" in the web UI is only the application of a decision SeaTalk has already recorded.
+ * It requires the caller to hold the open assignment and the provider to report the item approved by that
+ * same employee. A provider outage leaves the request pending; nothing is ever approved locally.
+ */
+export function createSeatalkApprovalGate(coordinator: ApprovalCoordinator, approvals: ApprovalStore): ApprovalGate {
+  return {
+    async authorizeWebApproval(actor, request) {
+      const v = await coordinator.verifyWebApproval(actor, request.id);
+      if (!v.ok) return { ok: false, code: v.code };
+      return { ok: true, source: "SEATALK", applied: () => approvals.closeAssignment(v.assignment.id, "APPROVED") };
+    },
+  };
 }
 export const disabledApprovalGate: ApprovalGate = {
   async authorizeWebApproval() {
@@ -45,6 +71,10 @@ export interface Backend {
   intradaySecret?: string;
   /** Present only when a signature secret is configured; still gated by features.seatalkApproval. */
   seatalk?: SeatalkWiring;
+  /** Presence/routing/provisioning (present when the SeaTalk provider is configured). */
+  approvals?: ApprovalCoordinator;
+  /** A heartbeat counts as "present" for this long (SEA-6 sandbox default 60 s). */
+  presenceActiveSeconds?: number;
 }
 
 export function makeBackend(
@@ -76,7 +106,11 @@ export async function getBackend(): Promise<Backend | null> {
     cached = null;
     return cached;
   }
-  const { createSupabaseBackend } = await import("./supabase/backend.ts");
+  const { createSupabaseBackend, SupabaseStore } = await import("./supabase/backend.ts");
+  const { Rest } = await import("./supabase/rest.ts");
+  const { approvalCoordinatorFromEnv } = await import("./seatalk/wiring.ts");
+  const rest = new Rest({ url, serviceKey: service });
+  const approvals = approvalCoordinatorFromEnv(process.env, rest, new SupabaseStore(rest)) ?? undefined;
   const flag = (n: string) => process.env[n] === "true";
   const perMinute = (name: string, dflt: number) => createRateLimiter({ limit: positiveNumber(process.env[name], dflt), windowMs: 60_000 });
   cached = createSupabaseBackend({ url, anonKey: anon, serviceKey: service }, {
@@ -84,6 +118,9 @@ export async function getBackend(): Promise<Backend | null> {
     anonLimiter: perMinute("SOC5_RATE_LIMIT_ANON_PER_MIN", 60),
     features: { seatalkApproval: flag("SOC5_FEATURE_SEATALK_APPROVAL"), seatalkAlerts: flag("SOC5_FEATURE_SEATALK_ALERTS"), googleSheets: flag("SOC5_FEATURE_GOOGLE_SHEETS") },
     seatalkSecret: process.env.SOC5_SEATALK_CALLBACK_SECRET,
+    seatalkEventSecret: process.env.SOC5_SEATALK_SIGNING_SECRET,
+    approvals,
+    presenceActiveSeconds: positiveNumber(process.env.SOC5_PRESENCE_ACTIVE_SECONDS, 60),
     seatalkMaxSkewSeconds: positiveNumber(process.env.SOC5_SEATALK_CALLBACK_MAX_SKEW_SECONDS, 300),
   });
   return cached;

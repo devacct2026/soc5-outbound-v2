@@ -30,6 +30,12 @@ export const ERROR_STATUS: Record<string, number> = {
   IDEMPOTENCY_KEY_REQUIRED: 400,
   BAD_REQUEST: 400,
   APPROVAL_PROVIDER_DISABLED: 503,
+  PROVIDER_UNAVAILABLE: 503,
+  NOT_ASSIGNED_APPROVER: 403,
+  NOT_APPROVED_IN_SEATALK: 409,
+  OPS_ID_TAKEN: 409,
+  SELF_CHANGE: 409,
+  PASSWORD_CHANGE_REQUIRED: 403,
   BACKEND_NOT_CONFIGURED: 503,
   RATE_LIMITED: 429,
   RANGE_TOO_LARGE: 422,
@@ -81,13 +87,37 @@ export interface CommandSpec {
   correlationId?: string;
 }
 
+const PROVISION_EVENTS = new Set(["REQUEST_CREATED", "REQUEST_RESUBMITTED"]);
+const SYNC_EVENTS = new Set(["REQUEST_APPROVED", "REQUEST_REJECTED", "REQUEST_CANCELLED"]);
+
 function outboxFor(
   notifications: NotificationIntent[],
   request: RequestRecord,
   nextVersion: number,
   features: Features,
+  eventType: string,
 ): OutboxIntent[] {
   const out: OutboxIntent[] = [];
+  // SEA-1: approvals exist only as SeaTalk Approval Center items, so a new/resubmitted request must be
+  // provisioned (routed + item created), and every decision/cancellation synchronized, via the durable outbox.
+  if (features.seatalkApproval) {
+    if (PROVISION_EVENTS.has(eventType)) {
+      out.push({
+        idempotencyKey: `provision:${request.id}:v${nextVersion}`,
+        channel: "SEATALK_APPROVAL_PROVISION",
+        eventType,
+        payload: { requestId: request.id },
+      });
+    }
+    if (SYNC_EVENTS.has(eventType)) {
+      out.push({
+        idempotencyKey: `sync:${request.id}:v${nextVersion}`,
+        channel: "SEATALK_APPROVAL_SYNC",
+        eventType,
+        payload: { requestId: request.id },
+      });
+    }
+  }
   if (features.seatalkAlerts) {
     for (const n of notifications) {
       out.push({
@@ -142,7 +172,7 @@ export async function runCommand(store: Store, spec: CommandSpec): Promise<Store
           expectedVersion: tx.request ? tx.request.rowVersion : null,
           event: result.event,
           notifications: result.notifications,
-          outbox: outboxFor(result.notifications, next, (tx.request?.rowVersion ?? 0) + 1, features),
+          outbox: outboxFor(result.notifications, next, (tx.request?.rowVersion ?? 0) + 1, features, result.event.type),
           idem: { ...scope, response },
         });
         return response;
