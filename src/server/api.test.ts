@@ -137,7 +137,10 @@ test("SEA-1: approval is refused (503) while the SeaTalk gate is disabled; no by
   assert.equal(out.status, 503);
   assert.equal(out.body.error, "APPROVAL_PROVIDER_DISABLED");
   assert.equal(store.requests.get(r.id)?.status, "PENDING", "approval stays pending");
-  assert.equal((await call(b2, bulkApproveHandler, "ops1", "POST", "/b", { ids: [r.id] })).body.failed[0].error, "APPROVAL_PROVIDER_DISABLED");
+  const r2 = await create(b2), r3 = await create(b2);
+  const bulk = await call(b2, bulkApproveHandler, "ops1", "POST", "/b", { ids: [r.id, r2.id, r3.id] });
+  assert.equal(bulk.body.failed.length, 3);
+  assert.ok(bulk.body.failed.every((failure: { error: string }) => failure.error === "APPROVAL_PROVIDER_DISABLED"));
   // rejection does not approve anything and remains available
   assert.equal((await act(b2, "ops1", r.id, "reject-ops", { rejection_remarks: "bad" })).status, 200);
 });
@@ -298,12 +301,13 @@ test("clusters search bounds; bulk approve limits and FTE Ops only", async () =>
   store.clusters.push({ id: "c1", name: "Alpha Cluster", hub: null, region: "R", dockNo: "1", backlogs: 0, backlogsTimestamp: null, active: true });
   assert.equal((await call(backend, clustersHandler, "pic1", "GET", "/c?search=al")).status, 422);
   assert.equal((await call(backend, clustersHandler, "pic1", "GET", "/c?search=alpha")).body.data.length, 1);
-  const a = await create(backend), b = await create(backend);
+  const a = await create(backend), b = await create(backend), c = await create(backend);
   assert.equal((await call(backend, bulkApproveHandler, "mm1", "POST", "/b", { ids: [a.id] })).status, 403);
   assert.equal((await call(backend, bulkApproveHandler, "ops1", "POST", "/b", { ids: [] })).status, 422);
+  assert.equal((await call(backend, bulkApproveHandler, "ops1", "POST", "/b", { ids: [a.id, b.id] })).status, 422);
   assert.equal((await call(backend, bulkApproveHandler, "ops1", "POST", "/b", { ids: [a.id, a.id] })).status, 422);
-  const ok = await call(backend, bulkApproveHandler, "ops1", "POST", "/b", { ids: [a.id, b.id, "11111111-1111-1111-1111-111111111111"] });
-  assert.equal(ok.body.data.length, 2);
+  const ok = await call(backend, bulkApproveHandler, "ops1", "POST", "/b", { ids: [a.id, b.id, c.id, "11111111-1111-1111-1111-111111111111"] });
+  assert.equal(ok.body.data.length, 3);
   assert.equal(ok.body.failed[0].error, "NOT_FOUND");
 });
 

@@ -143,11 +143,16 @@ test("Cancellation: FTE MM must give remarks; the dialog sends them with an idem
 
 test("FTE Ops bulk approval sends all selected ids once and reports per-request failures", async ({ page }) => {
   let sent: unknown = null;
-  await page.route("**/api/v1/requests?*", (r) => r.fulfill({ json: { data: [base(1), base(2), base(3)], has_more: false, next_cursor: null, limit: 25 } }));
+  const rows = [base(1), base(2), base(3)];
+  await page.route("**/api/v1/requests?*", (r) => r.fulfill({ json: { data: rows, has_more: false, next_cursor: null, limit: 25 } }));
   await page.route("**/api/v1/requests/bulk-approve", (r) => { sent = r.request().postDataJSON(); return r.fulfill({ json: { data: [base(1), base(2)], failed: [{ id: ID(3), error: "NOT_APPROVED_IN_SEATALK" }] } }); });
   await signedIn(page, "fte_ops");
   await go(page, /^Requests/);
   await page.getByLabel("Select all approvable on this page").check();
+  const bulkButton = page.getByRole("button", { name: /Apply SeaTalk approval to selected/ });
+  await expect(bulkButton).toBeDisabled();
+  await page.getByLabel("Select REQ-00000003").check();
+  await expect(bulkButton).toBeEnabled();
   await page.getByRole("button", { name: /Apply SeaTalk approval to selected \(3\)/ }).click();
   await expect(page.getByText(/2 approved; not approved — REQ-00000003: Approve this request in SeaTalk Approval Center first/)).toBeVisible();
   expect(sent).toEqual({ ids: [ID(1), ID(2), ID(3)] });
@@ -155,20 +160,31 @@ test("FTE Ops bulk approval sends all selected ids once and reports per-request 
 
 test("Docking: Doc Officer assigns, then explicitly reassigns a driver; the print label opens with the driver ID", async ({ page }) => {
   const calls: string[] = [];
+  const keys: string[] = [];
   let withDriver = false;
-  const row = () => ({ ...base(6, { status: "DOCKING", display_status: "DOCKING", approval_status: "APPROVED", plate_number: "ABC 123", driver_id: withDriver ? "555" : null, next_action_role: "doc_officer" }) });
+  const row = () => ({ ...base(6, { cluster: "Old Hub", dock_no: "7", status: "DOCKING", display_status: "DOCKING", approval_status: "APPROVED", plate_number: "ABC 123", driver_id: withDriver ? "555" : null, next_action_role: "doc_officer" }) });
+  const saved = { ...row(), cluster: "Latest Hub", dock_no: "99", plate_number: "LATEST 909", driver_id: "555", docked_at: "2026-10-19T11:00:00Z" };
   await page.route("**/api/v1/requests/queue*", (r) => r.fulfill({ json: { data: [row()], has_more: false, next_cursor: null, limit: 25 } }));
   await page.route("**/api/v1/requests?*", (r) => r.fulfill({ json: { data: [], has_more: false, next_cursor: null, limit: 25 } }));
-  await page.route("**/api/v1/requests/*/assign-driver", (r) => { calls.push(`assign ${JSON.stringify(r.request().postDataJSON())}`); withDriver = true; return r.fulfill({ json: { request: row() } }); });
-  await page.route("**/api/v1/requests/*/reassign-driver", (r) => { calls.push(`reassign ${JSON.stringify(r.request().postDataJSON())}`); return r.fulfill({ json: { request: row() } }); });
+  await page.route("**/api/v1/requests/*/assign-driver", (r) => { calls.push(`assign ${JSON.stringify(r.request().postDataJSON())}`); keys.push(r.request().headers()["idempotency-key"]); withDriver = true; return r.fulfill({ json: { request: saved } }); });
+  await page.route("**/api/v1/requests/*/reassign-driver", (r) => { calls.push(`reassign ${JSON.stringify(r.request().postDataJSON())}`); keys.push(r.request().headers()["idempotency-key"]); return r.fulfill({ json: { request: { ...saved, driver_id: "777", plate_number: "LATEST 777" } } }); });
   await signedIn(page, "doc_officer");
   await go(page, /^Docking/);
-  await page.getByRole("button", { name: "Assign driver" }).click();
+  await expect(page.getByRole("button", { name: "Assign Driver ID" })).toBeDisabled();
+  await page.getByLabel("Select REQ-00000006 for driver assignment").check();
+  await page.getByRole("button", { name: "Assign Driver ID" }).click();
+  const driverDialog = page.getByRole("dialog", { name: "Assign Driver ID" });
+  await expect(driverDialog.getByRole("button", { name: "Assigned" })).toBeDisabled();
+  await page.getByPlaceholder("Driver ID (1-10 digits)").fill("555x");
+  await expect(driverDialog.getByRole("button", { name: "Assigned" })).toBeDisabled();
   await page.getByPlaceholder("Driver ID (1-10 digits)").fill("555");
-  await page.getByRole("button", { name: /Confirm assign driver/i }).click();
+  await expect(driverDialog.getByRole("button", { name: "Assigned" })).toBeEnabled();
+  await driverDialog.getByRole("button", { name: "Assigned" }).click();
   await expect(page.getByRole("dialog", { name: "Printable truck label" })).toBeVisible();
   await expect(page.locator('[data-label-field="driver"]')).toHaveText("555");
-  await expect(page.locator('[data-label-field="plate"]')).toHaveText("ABC 123");
+  await expect(page.locator('[data-label-field="plate"]')).toHaveText("LATEST 909");
+  await expect(page.locator('[data-label-field="dock"]')).toHaveText("99");
+  await expect(page.locator('[data-label-field="load-single"]')).toHaveText("Latest Hub");
   await expect(page.getByRole("button", { name: "Print", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("button", { name: "Reassign driver" }).click();
@@ -176,7 +192,12 @@ test("Docking: Doc Officer assigns, then explicitly reassigns a driver; the prin
   await page.getByPlaceholder("Driver ID (1-10 digits)").fill("777");
   await page.getByRole("button", { name: /Confirm reassign driver/i }).click();
   await expect(page.getByText("Reassign driver completed.")).toBeVisible();
+  await expect(page.locator('[data-label-field="driver"]')).toHaveText("777");
+  await expect(page.locator('[data-label-field="plate"]')).toHaveText("LATEST 777");
   expect(calls).toEqual(['assign {"driver_id":"555"}', 'reassign {"driver_id":"777"}']);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/);
+  expect(keys[1]).toMatch(/^[0-9a-f-]{36}$/);
 });
 
 test("Queue pagination: page size and the next page are fetched from the server", async ({ page }) => {

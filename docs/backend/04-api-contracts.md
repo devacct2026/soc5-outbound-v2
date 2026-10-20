@@ -37,7 +37,7 @@ JSON and server-side validation. Source: `backend/routes/api.php` and
 | `POST /api/v1/requests` | `cluster`, `region`, `dock_no`, `backlogs`, optional `backlogs_timestamp`, `truck_size`, `truck_type` | `201` and created request. Ops PIC/FTE Ops only. |
 | `PUT /api/v1/requests/{id}` | Same validated request-detail fields | Updated request, subject to workflow edit permissions. Only correctable rejected requests may be resubmitted to `PENDING` by their authorized return actor. FTE Ops rejection of an FTE Ops-created request is final and not editable or resubmittable. |
 | `POST /api/v1/requests/{id}/{action}` | `approve`, `reject-ops`, `cancel`, `reject-mm`, `assign-truck`, `mark-docked`, `reassign-driver` | Updated request. Action-specific fields below; unknown and extra fields rejected. |
-| `POST /api/v1/requests/bulk-approve` | `{ids:[uuid,...]}`; 1–100 distinct IDs | `{data:[updated request,...]}`; FTE Ops only. |
+| `POST /api/v1/requests/bulk-approve` | `{ids:[uuid,...]}`; 3–100 distinct IDs | `{data:[updated request,...]}`; FTE Ops only. Requests fewer than three IDs are rejected. |
 | `GET /api/v1/requests/metrics` | Optional `search`, `date_from`, `date_to` | `{total,awaiting_action,by_status}`. Awaiting counts include `PENDING`, `REQUESTED`, `REROUTED`, actionable `REJECTED` records with an approved return route, and active docking states; exclude final no-route APR-3 rejections and historical-only statuses. |
 | `GET /api/v1/requests/analytics` | `date_from`, `date_to` | Truck-size counts, 13 shift-hour bins, shift start, average dwell and waiting minutes. |
 | `GET /api/v1/requests/summary` | Optional `search`, `date_from`, `date_to` | `{metrics,analytics}` combined. |

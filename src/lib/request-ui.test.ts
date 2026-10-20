@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { canCancel as serverCanCancel, createRequest, editRequest, type RequestRecord } from "../domain/requests/lifecycle.ts";
 import type { Actor, RejectionDisposition, Role } from "../domain/requests/workflow.ts";
 import {
-  canBulkSelect, canCancel, canEdit, canPrint, fmtDateTime, firstPage, labelKind, labelLoads, listQuery, nextPager, prevPager, queueActions, toLocalInput,
+  canAssignDriver, canBulkSelect, canCancel, canEdit, canPrint, fmtDateTime, firstPage, labelKind, labelLoads, listQuery, nextPager, prevPager, queueActions, toLocalInput,
   type Me, type RowRequest,
 } from "./request-ui.ts";
 
@@ -75,6 +75,9 @@ test("queue actions match the workflow roles; reassign appears only once a drive
   assert.equal(canBulkSelect({ id: "o", role: "fte_ops" }, mk("PENDING")), true);
   assert.equal(canBulkSelect({ id: "m", role: "fte_mm" }, mk("PENDING")), false);
   assert.equal(canBulkSelect({ id: "o", role: "fte_ops" }, mk("REQUESTED")), false);
+  assert.equal(canAssignDriver({ id: "d", role: "doc_officer" }, mk("DOCKING")), true);
+  assert.equal(canAssignDriver({ id: "d", role: "doc_officer" }, mk("DOCKING", "123")), false);
+  assert.equal(canAssignDriver({ id: "m", role: "fte_mm" }, mk("DOCKING")), false);
   assert.equal(canPrint({ ...mk("DOCKING", "1"), plate_number: "A" }), true);
   assert.equal(canPrint({ ...mk("DOCKING"), plate_number: "A" }), false, "no label without a driver");
 });

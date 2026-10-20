@@ -171,7 +171,7 @@ export function parseBulkIds(body: unknown): Parsed<string[]> {
   const errors: Record<string, string> = {};
   strictKeys(body, ["ids"], errors);
   const ids = body.ids;
-  if (!Array.isArray(ids) || ids.length < 1 || ids.length > 100) errors.ids = "1-100 ids required";
+  if (!Array.isArray(ids) || ids.length < 3 || ids.length > 100) errors.ids = "3-100 ids required";
   else if (!ids.every(isUuid)) errors.ids = "all ids must be uuids";
   else if (new Set(ids).size !== ids.length) errors.ids = "ids must be distinct";
   if (Object.keys(errors).length) return { ok: false, errors };

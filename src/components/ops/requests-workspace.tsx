@@ -171,7 +171,8 @@ export function RequestsWorkspace() {
       {me.role === "fte_ops" && selected.size > 0 && (
         <p className="ops-bulk">
           {selected.size} selected{" "}
-          <button type="button" className="ops-btn ops-primary" onClick={bulkApprove}>Apply SeaTalk approval to selected ({selected.size})</button>{" "}
+          <button type="button" className="ops-btn ops-primary" disabled={selected.size < 3} onClick={bulkApprove}>Apply SeaTalk approval to selected ({selected.size})</button>{" "}
+          {selected.size < 3 && <small>Select at least 3 requests to bulk approve. </small>}
           <button type="button" className="ops-btn" onClick={() => setSelected(new Set())}>Clear selection</button>
         </p>
       )}

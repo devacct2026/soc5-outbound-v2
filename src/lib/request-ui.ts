@@ -82,6 +82,7 @@ export const cancelNeedsRemarks = (me: Me) => me.role === "fte_mm";
 export const canPrint = (r: RowRequest) => !!r.driver_id && !!r.plate_number;
 
 export const canBulkSelect = (me: Me, r: RowRequest) => me.role === "fte_ops" && (r.status === "PENDING" || r.status === "REROUTED");
+export const canAssignDriver = (me: Me, r: RowRequest) => me.role === "doc_officer" && r.status === "DOCKING" && !r.driver_id;
 
 export type QueueAction = "approve" | "reject" | "assign-truck" | "assign-driver" | "reassign-driver" | "dock";
 

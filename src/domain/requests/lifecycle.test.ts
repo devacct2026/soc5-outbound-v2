@@ -225,7 +225,11 @@ test("validation: strict fields, formats and bounds", () => {
   assert.equal(parseTruck({ plate_number: "ab 12", truck_size: "4W", truck_type: "WETLEASE", provide_time: "1999" }).ok, true);
   assert.equal(parseTruck({ plate_number: "<script>", truck_size: "4W", truck_type: "WETLEASE" }).ok, false);
   const id = "11111111-1111-1111-1111-111111111111";
-  assert.equal(parseBulkIds({ ids: [id] }).ok, true);
+  const id2 = "22222222-2222-2222-2222-222222222222";
+  const id3 = "33333333-3333-3333-3333-333333333333";
+  assert.equal(parseBulkIds({ ids: [id] }).ok, false);
+  assert.equal(parseBulkIds({ ids: [id, id2] }).ok, false);
+  assert.equal(parseBulkIds({ ids: [id, id2, id3] }).ok, true);
   assert.equal(parseBulkIds({ ids: [id, id] }).ok, false);
   assert.equal(parseBulkIds({ ids: [] }).ok, false);
   assert.equal(parseBulkIds({ ids: Array.from({ length: 101 }, (_, i) => `11111111-1111-1111-1111-${String(i).padStart(12, "0")}`) }).ok, false);
